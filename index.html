@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Markdown Viewer</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<link rel="stylesheet" id="hljs-light" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/styles/github.min.css">
+<link rel="stylesheet" id="hljs-dark" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/styles/github-dark.min.css" disabled>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1f2328; --muted: #656d76; --border: #d0d7de;
+    --code-bg: #f6f8fa; --link: #0969da; --accent: #0969da; --quote: #57606a;
+    --toolbar-bg: #f6f8fa; --sidebar-w: 260px; --mark: #fff8c5;
+  }
+  [data-theme="dark"] {
+    --bg: #0d1117; --fg: #e6edf3; --muted: #8d96a0; --border: #30363d;
+    --code-bg: #161b22; --link: #4493f8; --accent: #4493f8; --quote: #8d96a0;
+    --toolbar-bg: #161b22; --mark: #5a4a00;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+    display: flex; flex-direction: column;
+  }
+  /* Toolbar */
+  #toolbar {
+    display: flex; align-items: center; gap: 8px; padding: 8px 14px;
+    background: var(--toolbar-bg); border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10; flex-wrap: wrap;
+  }
+  #toolbar .title { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #toolbar .title small { color: var(--muted); font-weight: 400; margin-left: 8px; }
+  button, label.btn {
+    font: inherit; font-size: 13px; padding: 5px 11px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--bg); color: var(--fg);
+  }
+  button:hover, label.btn:hover { border-color: var(--accent); }
+  input[type=file] { display: none; }
+  /* Layout */
+  #main { display: flex; flex: 1; min-height: 0; }
+  #toc {
+    width: var(--sidebar-w); flex: none; border-right: 1px solid var(--border);
+    overflow: auto; padding: 16px 12px; font-size: 13px; position: sticky; top: 49px;
+    height: calc(100vh - 49px);
+  }
+  #toc.hidden { display: none; }
+  #toc a { display: block; color: var(--muted); text-decoration: none; padding: 3px 6px; border-radius: 4px;
+           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #toc a:hover { color: var(--fg); background: var(--code-bg); }
+  #toc a.active { color: var(--accent); font-weight: 600; }
+  #toc .l2 { padding-left: 18px; } #toc .l3 { padding-left: 30px; }
+  #toc .l4 { padding-left: 42px; } #toc .l5, #toc .l6 { padding-left: 54px; }
+  #content { flex: 1; min-width: 0; overflow: auto; }
+  article { max-width: 900px; margin: 0 auto; padding: 32px 40px 80px; }
+  /* Drop zone */
+  #drop {
+    margin: 60px auto; max-width: 560px; padding: 60px 30px; text-align: center;
+    border: 2px dashed var(--border); border-radius: 12px; color: var(--muted);
+  }
+  #drop h2 { color: var(--fg); margin-top: 0; }
+  body.dragging #drop, body.dragging #content { outline: 3px dashed var(--accent); outline-offset: -3px; }
+  /* Markdown body */
+  .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { margin: 1.5em 0 .6em; line-height: 1.25; font-weight: 600; scroll-margin-top: 60px; }
+  .md h1 { font-size: 2em; padding-bottom: .3em; border-bottom: 1px solid var(--border); }
+  .md h2 { font-size: 1.5em; padding-bottom: .3em; border-bottom: 1px solid var(--border); }
+  .md h3 { font-size: 1.25em; } .md h4 { font-size: 1em; } .md h5 { font-size: .875em; } .md h6 { font-size: .85em; color: var(--muted); }
+  .md h1:first-child { margin-top: 0; }
+  .md .anchor { opacity: 0; margin-left: 6px; text-decoration: none; color: var(--muted); font-weight: 400; }
+  .md h1:hover .anchor, .md h2:hover .anchor, .md h3:hover .anchor, .md h4:hover .anchor { opacity: 1; }
+  .md a { color: var(--link); } 
+  .md p, .md ul, .md ol, .md blockquote, .md table, .md pre, .md details { margin: 0 0 16px; }
+  .md ul, .md ol { padding-left: 2em; }
+  .md li + li { margin-top: .25em; }
+  .md li > p { margin-bottom: 8px; }
+  .md ul.contains-task-list { list-style: none; padding-left: 1.2em; }
+  .md .task-list-item input { margin: 0 .5em 0 -1.2em; vertical-align: middle; }
+  .md blockquote { padding: 0 1em; color: var(--quote); border-left: .25em solid var(--border); }
+  .md hr { height: .25em; border: 0; background: var(--border); margin: 24px 0; }
+  .md img { max-width: 100%; }
+  .md table { border-collapse: collapse; display: block; max-width: 100%; overflow: auto; width: max-content; }
+  .md th, .md td { border: 1px solid var(--border); padding: 6px 13px; }
+  .md th { font-weight: 600; background: var(--code-bg); }
+  .md tr:nth-child(2n) { background: var(--code-bg); }
+  .md code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 85%;
+             background: var(--code-bg); padding: .2em .4em; border-radius: 6px; }
+  .md pre { background: var(--code-bg); padding: 16px; border-radius: 6px; overflow: auto; line-height: 1.45; position: relative; }
+  .md pre code { background: none; padding: 0; font-size: 85%; white-space: pre; }
+  .md pre .lang { position: absolute; top: 6px; right: 10px; font-size: 11px; color: var(--muted); text-transform: uppercase; }
+  .md pre .copy { position: absolute; top: 6px; right: 10px; font-size: 11px; padding: 2px 8px; opacity: 0; transition: opacity .15s; }
+  .md pre:hover .copy { opacity: 1; } .md pre:hover .lang { opacity: 0; }
+  .md mark { background: var(--mark); color: inherit; }
+  .md kbd { display: inline-block; padding: 2px 5px; font: 11px ui-monospace, monospace; line-height: 10px; color: var(--fg);
+            background: var(--code-bg); border: 1px solid var(--border); border-bottom-width: 3px; border-radius: 6px; }
+  .md .mermaid { background: transparent; text-align: center; margin: 0 0 16px; overflow: auto; }
+  .md .mermaid svg { max-width: 100%; height: auto; }
+  .md .mermaid-error { color: #d1242f; background: var(--code-bg); padding: 12px; border-radius: 6px; font-size: 13px; white-space: pre-wrap; }
+  .md .footnotes { font-size: 14px; color: var(--muted); border-top: 1px solid var(--border); margin-top: 32px; padding-top: 8px; }
+  .md .footnote-backref { text-decoration: none; }
+  .md details summary { cursor: pointer; font-weight: 600; }
+  .md .katex-display { overflow: auto hidden; }
+  /* Alerts (GitHub-style > [!NOTE]) */
+  .md .alert { padding: 8px 16px; border-left: .25em solid; color: var(--fg); margin-bottom: 16px; }
+  .md .alert > p:first-child { font-weight: 600; margin-bottom: 4px; }
+  .md .alert > p:last-child { margin-bottom: 0; }
+  .md .alert-note { border-color: #0969da; } .md .alert-note > p:first-child { color: #0969da; }
+  .md .alert-tip { border-color: #1a7f37; } .md .alert-tip > p:first-child { color: #1a7f37; }
+  .md .alert-important { border-color: #8250df; } .md .alert-important > p:first-child { color: #8250df; }
+  .md .alert-warning { border-color: #9a6700; } .md .alert-warning > p:first-child { color: #9a6700; }
+  .md .alert-caution { border-color: #cf222e; } .md .alert-caution > p:first-child { color: #cf222e; }
+  #error { color: #cf222e; background: var(--code-bg); padding: 12px 16px; margin: 16px; border-radius: 6px; display: none; white-space: pre-wrap; }
+  @media (max-width: 800px) { #toc { display: none; } article { padding: 20px; } }
+  @media print {
+    #toolbar, #toc { display: none !important; }
+    #content { overflow: visible; } article { max-width: none; padding: 0; }
+    .md pre { white-space: pre-wrap; }
+  }
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <span class="title" id="title">Markdown Viewer</span>
+  <label class="btn" for="file-input">Open…</label>
+  <input type="file" id="file-input" accept=".md,.markdown,.mdown,.mkd,.txt,text/markdown,text/plain">
+  <button id="btn-reload" title="Re-read the file (R)">Reload</button>
+  <button id="btn-toc" title="Toggle table of contents (T)">TOC</button>
+  <button id="btn-theme" title="Toggle dark mode (D)">Dark</button>
+  <button id="btn-print" title="Print / Save as PDF (P)">Print</button>
+</div>
+<div id="main">
+  <nav id="toc" class="hidden"></nav>
+  <div id="content">
+    <div id="error"></div>
+    <article>
+      <div id="drop">
+        <h2>Drop a Markdown file here</h2>
+        <p>or use <strong>Open…</strong> above, or paste Markdown with <kbd>⌘V</kbd> / <kbd>Ctrl+V</kbd>.</p>
+        <p style="font-size:13px">Supports GitHub-flavored Markdown, tables, task lists, footnotes, syntax highlighting, Mermaid diagrams, and LaTeX math.</p>
+      </div>
+      <div id="out" class="md"></div>
+    </article>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/markdown-it-footnote@4.0.0/dist/markdown-it-footnote.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/markdown-it-task-lists@2.1.1/dist/markdown-it-task-lists.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/highlight.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js"></script>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs';
+window.mermaid = mermaid;
+window.dispatchEvent(new Event('mermaid-ready'));
+</script>
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const out = $('#out'), toc = $('#toc'), drop = $('#drop'), titleEl = $('#title'), errEl = $('#error');
+  const state = { fileName: null, handle: null, baseUrl: null, source: '' };
+  let mermaidGen = 0;
+
+  // ---------- Theme ----------
+  const prefersDark = matchMedia('(prefers-color-scheme: dark)').matches;
+  let theme = localStorage.getItem('mdv-theme') || (prefersDark ? 'dark' : 'light');
+  function applyTheme(t) {
+    theme = t; document.documentElement.dataset.theme = t; localStorage.setItem('mdv-theme', t);
+    $('#hljs-light').disabled = t === 'dark'; $('#hljs-dark').disabled = t !== 'dark';
+    $('#btn-theme').textContent = t === 'dark' ? 'Light' : 'Dark';
+    if (window.mermaid) { initMermaid(); if (state.source) render(state.source); }
+  }
+  function initMermaid() {
+    window.mermaid.initialize({ startOnLoad: false, theme: theme === 'dark' ? 'dark' : 'default', securityLevel: 'strict' });
+  }
+  applyTheme(theme);
+  addEventListener('mermaid-ready', () => { initMermaid(); if (state.source) render(state.source); });
+
+  // ---------- Markdown engine ----------
+  const md = window.markdownit({
+    html: true, linkify: true, typographer: true,
+    highlight(str, lang) {
+      if (lang === 'mermaid') return `<pre class="mermaid-src">${md.utils.escapeHtml(str)}</pre>`;
+      let body;
+      if (lang && hljs.getLanguage(lang)) {
+        try { body = hljs.highlight(str, { language: lang, ignoreIllegals: true }).value; } catch {}
+      }
+      if (body === undefined) body = lang ? md.utils.escapeHtml(str) : hljs.highlightAuto(str).value;
+      const label = lang ? `<span class="lang">${md.utils.escapeHtml(lang)}</span>` : '';
+      return `<pre class="hljs">${label}<button class="copy">Copy</button><code class="language-${md.utils.escapeHtml(lang || 'text')}">${body}</code></pre>`;
+    },
+  });
+  md.use(window.markdownitFootnote).use(window.markdownitTaskLists, { label: true });
+
+  // Heading ids + anchors
+  const slugify = (s) => s.toLowerCase().trim().replace(/[^\wÀ-￿\- ]+/g, '').replace(/\s+/g, '-');
+  md.core.ruler.push('heading_ids', (st) => {
+    const seen = new Map();
+    st.tokens.forEach((tok, i) => {
+      if (tok.type !== 'heading_open') return;
+      const text = st.tokens[i + 1].children.filter(t => t.type === 'text' || t.type === 'code_inline').map(t => t.content).join('');
+      let id = slugify(text) || 'section';
+      const n = seen.get(id) || 0; seen.set(id, n + 1); if (n) id += '-' + n;
+      tok.attrSet('id', id);
+      const a = new st.Token('html_inline', '', 0);
+      a.content = `<a class="anchor" href="#${id}" aria-hidden="true">#</a>`;
+      st.tokens[i + 1].children.push(a);
+    });
+  });
+
+  // GitHub-style alerts: > [!NOTE]
+  md.core.ruler.push('gh_alerts', (st) => {
+    const t = st.tokens;
+    for (let i = 0; i < t.length; i++) {
+      if (t[i].type !== 'blockquote_open') continue;
+      const inline = t[i + 2];
+      if (!inline || inline.type !== 'inline') continue;
+      const m = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*\n?/i.exec(inline.content);
+      if (!m) continue;
+      const kind = m[1].toLowerCase();
+      t[i].attrSet('class', `alert alert-${kind}`);
+      const first = inline.children[0];
+      if (first && first.type === 'text') {
+        first.content = first.content.replace(/^\[!\w+\]\s*/, '');
+        // drop the softbreak that followed the marker line
+        if (!first.content && inline.children[1] && inline.children[1].type === 'softbreak') inline.children.splice(0, 2);
+      }
+      const titleTok = new st.Token('html_inline', '', 0);
+      titleTok.content = `${kind[0].toUpperCase()}${kind.slice(1)}`;
+      // If the marker paragraph is now empty, turn it into the title paragraph
+      if (inline.children.length === 0) { inline.children.push(titleTok); }
+      else {
+        // Insert a separate title paragraph before this one
+        const pOpen = new st.Token('paragraph_open', 'p', 1), pIn = new st.Token('inline', '', 0), pClose = new st.Token('paragraph_close', 'p', -1);
+        pIn.children = [titleTok]; pIn.content = titleTok.content;
+        t.splice(i + 1, 0, pOpen, pIn, pClose); i += 3;
+      }
+    }
+  });
+
+  // Resolve relative links/images against the file's base URL (when served via mdview or ?file=)
+  const defaultImage = md.renderer.rules.image;
+  md.renderer.rules.image = (tokens, idx, opts, env, self) => {
+    const t = tokens[idx], src = t.attrGet('src');
+    if (src && state.baseUrl && !/^[a-z]+:|^\/\/|^#|^data:/i.test(src)) t.attrSet('src', new URL(src, state.baseUrl).href);
+    return defaultImage(tokens, idx, opts, env, self);
+  };
+  const defaultLinkOpen = md.renderer.rules.link_open || ((t, i, o, e, s) => s.renderToken(t, i, o));
+  md.renderer.rules.link_open = (tokens, idx, opts, env, self) => {
+    const t = tokens[idx], href = t.attrGet('href') || '';
+    if (/^[a-z]+:|^\/\//i.test(href)) { t.attrSet('target', '_blank'); t.attrSet('rel', 'noopener noreferrer'); }
+    else if (state.baseUrl && !href.startsWith('#')) {
+      const u = new URL(href, state.baseUrl);
+      if (/\.(md|markdown|mdown|mkd)$/i.test(u.pathname) && location.search.includes('file=')) {
+        t.attrSet('href', `${location.pathname}?file=${encodeURIComponent(u.pathname.replace(/^\/+/, ''))}${u.hash}`);
+      } else t.attrSet('href', u.href);
+    }
+    return defaultLinkOpen(tokens, idx, opts, env, self);
+  };
+
+  // ---------- Render ----------
+  async function render(src) {
+    state.source = src; errEl.style.display = 'none';
+    // Strip YAML front matter and show it as a table
+    let fm = null;
+    const fmMatch = /^---\s*\n([\s\S]*?)\n---\s*\n/.exec(src);
+    if (fmMatch) { fm = fmMatch[1]; src = src.slice(fmMatch[0].length); }
+
+    let html;
+    try { html = md.render(src); } catch (e) { showError('Render error: ' + e.message); return; }
+    html = DOMPurify.sanitize(html, { ADD_TAGS: ['details', 'summary', 'kbd', 'mark', 'sub', 'sup'], ADD_ATTR: ['target', 'open', 'align'] });
+    out.innerHTML = (fm ? `<details class="front-matter"><summary>Front matter</summary><pre><code>${md.utils.escapeHtml(fm)}</code></pre></details>` : '') + html;
+    drop.style.display = 'none';
+
+    // Math
+    if (window.renderMathInElement) {
+      renderMathInElement(out, {
+        delimiters: [
+          { left: '$$', right: '$$', display: true }, { left: '\\[', right: '\\]', display: true },
+          { left: '$', right: '$', display: false }, { left: '\\(', right: '\\)', display: false },
+        ],
+        ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'option'],
+        throwOnError: false,
+      });
+    }
+
+    // Copy buttons
+    out.querySelectorAll('pre .copy').forEach(btn => btn.addEventListener('click', () => {
+      navigator.clipboard.writeText(btn.nextElementSibling.textContent).then(() => {
+        btn.textContent = 'Copied'; setTimeout(() => btn.textContent = 'Copy', 1200);
+      });
+    }));
+
+    buildToc();
+
+    // Mermaid
+    const blocks = [...out.querySelectorAll('pre.mermaid-src')];
+    if (blocks.length && window.mermaid) {
+      const renderId = ++mermaidGen;
+      for (const [i, pre] of blocks.entries()) {
+        const code = pre.textContent;
+        const div = document.createElement('div'); div.className = 'mermaid';
+        try {
+          const { svg, bindFunctions } = await mermaid.render(`mmd-${renderId}-${i}`, code);
+          div.innerHTML = svg; bindFunctions?.(div);
+        } catch (e) {
+          div.innerHTML = `<div class="mermaid-error">Mermaid error: ${md.utils.escapeHtml(String(e.message || e))}</div><pre><code>${md.utils.escapeHtml(code)}</code></pre>`;
+          document.querySelectorAll('body > svg[id^="dmmd"], body > div[id^="dmmd"]').forEach(n => n.remove());
+        }
+        if (renderId !== mermaidGen) return; // a newer render superseded this one
+        pre.replaceWith(div);
+      }
+    }
+
+    if (location.hash) { const el = document.getElementById(decodeURIComponent(location.hash.slice(1))); el?.scrollIntoView(); }
+  }
+
+  function showError(msg) { errEl.textContent = msg; errEl.style.display = 'block'; }
+
+  // ---------- TOC ----------
+  function buildToc() {
+    const hs = [...out.querySelectorAll('h1, h2, h3, h4')];
+    toc.innerHTML = '';
+    if (hs.length < 2) { toc.classList.add('hidden'); return; }
+    hs.forEach(h => {
+      const a = document.createElement('a');
+      a.href = '#' + h.id; a.textContent = h.textContent.replace(/#$/, '').trim(); a.className = 'l' + h.tagName[1];
+      toc.appendChild(a);
+    });
+    if (localStorage.getItem('mdv-toc') !== 'hidden') toc.classList.remove('hidden');
+    const links = toc.querySelectorAll('a');
+    const obs = new IntersectionObserver((entries) => {
+      entries.forEach(en => { if (en.isIntersecting) {
+        links.forEach(l => l.classList.toggle('active', l.getAttribute('href') === '#' + en.target.id));
+      }});
+    }, { root: $('#content'), rootMargin: '0px 0px -75% 0px' });
+    hs.forEach(h => obs.observe(h));
+  }
+
+  // ---------- Loading ----------
+  function setTitle(name) {
+    state.fileName = name; titleEl.innerHTML = '';
+    titleEl.append(name || 'Markdown Viewer');
+    document.title = name ? `${name} – Markdown Viewer` : 'Markdown Viewer';
+  }
+  async function loadFile(file, handle) {
+    state.handle = handle || null; state.baseUrl = null;
+    setTitle(file.name);
+    render(await file.text());
+  }
+  async function loadUrl(url) {
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      state.baseUrl = new URL(url, location.href).href;
+      setTitle(decodeURIComponent(url.split('/').pop().split('?')[0]));
+      render(await res.text());
+    } catch (e) { showError(`Could not load ${url}: ${e.message}`); }
+  }
+
+  $('#file-input').addEventListener('change', (e) => { if (e.target.files[0]) loadFile(e.target.files[0]); e.target.value = ''; });
+
+  // Use File System Access API when available so "Reload" can re-read the file.
+  if (window.showOpenFilePicker) {
+    $('label.btn').addEventListener('click', async (e) => {
+      e.preventDefault();
+      try {
+        const [handle] = await showOpenFilePicker({ types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md', '.markdown', '.mdown', '.mkd'], 'text/plain': ['.txt'] } }] });
+        loadFile(await handle.getFile(), handle);
+      } catch (err) { if (err.name !== 'AbortError') showError(err.message); }
+    });
+  }
+
+  // Drag & drop
+  ['dragenter', 'dragover'].forEach(ev => addEventListener(ev, e => { e.preventDefault(); document.body.classList.add('dragging'); }));
+  ['dragleave', 'drop'].forEach(ev => addEventListener(ev, e => { e.preventDefault(); document.body.classList.remove('dragging'); }));
+  addEventListener('drop', async (e) => {
+    const item = e.dataTransfer.items?.[0];
+    if (item?.getAsFileSystemHandle) {
+      const h = await item.getAsFileSystemHandle();
+      if (h.kind === 'file') return loadFile(await h.getFile(), h);
+    }
+    const f = e.dataTransfer.files[0]; if (f) loadFile(f);
+  });
+
+  // Paste raw markdown
+  addEventListener('paste', (e) => {
+    const text = e.clipboardData.getData('text/plain');
+    if (text && !e.target.closest('input, textarea')) { state.handle = null; state.baseUrl = null; setTitle('Pasted Markdown'); render(text); }
+  });
+
+  // Toolbar
+  async function reload() {
+    if (state.handle) loadFile(await state.handle.getFile(), state.handle);
+    else if (state.baseUrl) loadUrl(state.baseUrl);
+    else if (state.source) render(state.source);
+  }
+  $('#btn-reload').addEventListener('click', reload);
+  $('#btn-toc').addEventListener('click', () => {
+    toc.classList.toggle('hidden'); localStorage.setItem('mdv-toc', toc.classList.contains('hidden') ? 'hidden' : 'shown');
+  });
+  $('#btn-theme').addEventListener('click', () => applyTheme(theme === 'dark' ? 'light' : 'dark'));
+  $('#btn-print').addEventListener('click', () => print());
+  addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey || e.target.matches('input, textarea')) return;
+    if (e.key === 'r') reload(); else if (e.key === 't') $('#btn-toc').click();
+    else if (e.key === 'd') $('#btn-theme').click(); else if (e.key === 'p') { e.preventDefault(); print(); }
+  });
+
+  // Auto-refresh when served by mdview (polls mtime)
+  const params = new URLSearchParams(location.search);
+  const fileParam = params.get('file');
+  if (fileParam) {
+    loadUrl(fileParam);
+    let lastMtime = null;
+    setInterval(async () => {
+      try {
+        const r = await fetch(`/__mtime?file=${encodeURIComponent(fileParam)}`, { cache: 'no-store' });
+        if (!r.ok) return;
+        const { mtime } = await r.json();
+        if (lastMtime !== null && mtime !== lastMtime) loadUrl(fileParam);
+        lastMtime = mtime;
+      } catch {}
+    }, 1000);
+  }
+  addEventListener('hashchange', () => { const el = document.getElementById(decodeURIComponent(location.hash.slice(1))); el?.scrollIntoView(); });
+})();
+</script>
+</body>
+</html>
