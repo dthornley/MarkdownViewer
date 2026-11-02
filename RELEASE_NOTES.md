@@ -1,0 +1,4 @@
+- Each document opens in its own window; View › Open Documents in Tabs groups them as tabs instead, and windows and tabs can be mixed
+- File › Open Recent lists the last ten documents
+- Documents that were open are reopened on relaunch, including after an update
+- File › New Window (⌘N); the Open dialog accepts several files at once
