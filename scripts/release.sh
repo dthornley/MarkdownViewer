@@ -32,6 +32,12 @@ case "$ARCH" in arm64) TARGET=darwin-aarch64 ;; x64) TARGET=darwin-x86_64 ;; *) 
 export TARGET   # read by the latest.json step below
 
 if git rev-parse "$TAG" >/dev/null 2>&1; then echo "tag $TAG already exists" >&2; exit 1; fi
+# The push at the end must be a fast-forward, so refuse to start a long build from a stale branch.
+git fetch -q origin
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [[ -n "$(git rev-list "HEAD..origin/$BRANCH" 2>/dev/null)" ]]; then
+  echo "$BRANCH is behind origin/$BRANCH; pull first" >&2; exit 1
+fi
 if [[ -n "$(git status --porcelain)" ]]; then git add -A; git commit -q -m "v$VERSION"; fi
 
 echo "==> Building $TAG (signed + notarized)..."
