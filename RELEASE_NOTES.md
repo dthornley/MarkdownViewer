@@ -1,1 +1,0 @@
-- Markdown Viewer › Make Default Markdown Viewer registers the app as the default for .md files (macOS asks you to confirm)
