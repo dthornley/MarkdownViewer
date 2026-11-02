@@ -34,6 +34,20 @@ function safeJoin(base, rel) {
   return p.startsWith(base + path.sep) || p === base ? p : null;
 }
 
+// Watch the directory (not the file) so editors that save via rename/replace are still seen.
+// Listeners are keyed by relative path and called at most once per ~100ms burst.
+const watchers = new Map(); // rel -> Set<fn>
+const timers = new Map();
+function onFsEvent(event, name) {
+  if (!name) return;
+  const rel = String(name);
+  const fns = watchers.get(rel);
+  if (!fns || !fns.size) return;
+  clearTimeout(timers.get(rel));
+  timers.set(rel, setTimeout(() => { timers.delete(rel); fns.forEach(fn => fn()); }, 100));
+}
+try { fs.watch(root, { recursive: true }, onFsEvent); } catch { fs.watch(root, onFsEvent); }
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const pathname = decodeURIComponent(url.pathname);
@@ -47,6 +61,20 @@ const server = http.createServer((req, res) => {
     if (!p || !fs.existsSync(p)) { res.writeHead(404); return res.end(); }
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     return res.end(JSON.stringify({ mtime: fs.statSync(p).mtimeMs }));
+  }
+  if (pathname === '/__events') {
+    const file = url.searchParams.get('file') || '';
+    const p = safeJoin(root, file);
+    if (!p || !fs.existsSync(p)) { res.writeHead(404); return res.end(); }
+    const rel = path.relative(root, p);
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', 'Connection': 'keep-alive' });
+    res.write(': connected\n\n');
+    const onChange = () => res.write(`data: ${JSON.stringify({ type: 'change', file })}\n\n`);
+    if (!watchers.has(rel)) watchers.set(rel, new Set());
+    watchers.get(rel).add(onChange);
+    const ping = setInterval(() => res.write(': ping\n\n'), 15000);
+    res.on('close', () => { clearInterval(ping); watchers.get(rel)?.delete(onChange); });
+    return;
   }
   const p = safeJoin(root, pathname);
   if (!p || !fs.existsSync(p) || fs.statSync(p).isDirectory()) { res.writeHead(404); return res.end('Not found'); }
