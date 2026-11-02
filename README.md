@@ -13,7 +13,8 @@ A simple, friendly viewer for Markdown files. One HTML file, no build step.
 - Table of contents sidebar with scroll tracking, heading anchors
 - Light and dark themes, print / save as PDF
 - Drag and drop, file picker, or paste Markdown straight into the page
-- Live reload when opened through the `mdview` command
+- Live reload when opened through the `mdview` command (server-sent events, keeps your scroll position)
+- Relative links to other `.md` files open inside the viewer; back and forward work
 
 ## Usage
 
@@ -23,7 +24,7 @@ A simple, friendly viewer for Markdown files. One HTML file, no build step.
 node bin/mdview.js path/to/file.md
 ```
 
-This starts a tiny local server, opens your browser, and reloads the page whenever the file changes. Relative images and links inside the document resolve correctly.
+This starts a tiny local server, opens your browser, and reloads the page the moment the file changes, keeping your scroll position. Relative images resolve correctly, and links to other Markdown files in the same tree open in the viewer.
 
 Install it globally so `mdview file.md` works anywhere:
 
