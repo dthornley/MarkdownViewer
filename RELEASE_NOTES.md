@@ -1,1 +1,0 @@
-- Fix Mermaid diagrams rendering as black, borderless boxes in the app (the diagram stylesheet was blocked by the content security policy)
