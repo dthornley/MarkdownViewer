@@ -45,7 +45,9 @@ for f in "$APP" "$DMG" "$ZIP"; do [[ -e "$f" ]] || { echo "missing $f" >&2; exit
 
 echo "==> Signing the update archive..."
 # The archive must hold the notarized, stapled app, so it is made here rather than by `tauri build`.
-tar -czf "$TAR" -C release "Markdown Viewer.app"
+# COPYFILE_DISABLE stops BSD tar adding AppleDouble (._*) entries, which the updater cannot unpack.
+COPYFILE_DISABLE=1 tar -czf "$TAR" -C release "Markdown Viewer.app"
+python3 -c 'import sys,tarfile; sys.exit(any("/._" in n or n.startswith("._") for n in tarfile.open(sys.argv[1]).getnames()))' "$TAR" || { echo "update archive contains AppleDouble entries" >&2; exit 1; }
 npx tauri signer sign -f "$KEY" -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" "$TAR" >/dev/null
 [[ -f "$TAR.sig" ]] || { echo "signing produced no $TAR.sig" >&2; exit 1; }
 
