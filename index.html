@@ -39,6 +39,10 @@
     border: 1px solid var(--border); background: var(--bg); color: var(--fg);
   }
   button:hover, label.btn:hover { border-color: var(--accent); }
+  #toolbar .nav { padding: 3px 9px; font-size: 16px; line-height: 1; display: none; }
+  #toolbar .nav:disabled { opacity: .35; cursor: default; }
+  body.has-nav #toolbar .nav { display: inline-block; }
+  #btn-back { margin-right: -4px; }
   input[type=file] { display: none; }
   /* Layout */
   #main { display: flex; flex: 1; min-height: 0; }
@@ -136,6 +140,7 @@
 </head>
 <body>
 <div id="toolbar">
+  <button id="btn-back" class="nav" title="Back (⌘[)" disabled>‹</button><button id="btn-fwd" class="nav" title="Forward (⌘])" disabled>›</button>
   <span class="title" id="title">Markdown Viewer</span>
   <label class="btn" for="file-input">Open…</label>
   <input type="file" id="file-input" accept=".md,.markdown,.mdown,.mkd,.txt,text/markdown,text/plain">
@@ -589,13 +594,27 @@
     const toUrl = (abs) => MDV + abs.replace(/\\/g, '/').split('/').map(encodeURIComponent).join('/');
     const fromUrl = (u) => { const p = decodeURIComponent(new URL(u).pathname); return isWin ? p.replace(/^\//, '') : p; };
     let lastOpen = { path: null, at: 0 }, changeTimer = null;
-    async function openPath(abs) {
+    // Back/forward history for this window: every document shown here, with where it was scrolled to.
+    const nav = { back: [], fwd: [] };
+    const navHere = () => state.baseUrl && { path: fromUrl(state.baseUrl), hash: location.hash, scroll: $('#content').scrollTop };
+    const updateNav = () => { $('#btn-back').disabled = !nav.back.length; $('#btn-fwd').disabled = !nav.fwd.length; };
+    document.body.classList.add('has-nav');
+    async function openPath(abs, entry) {
       if (abs === lastOpen.path && Date.now() - lastOpen.at < 1000) return; // launch can deliver the same file twice
       lastOpen = { path: abs, at: Date.now() };
+      const here = navHere();
+      if (!entry && here && here.path !== abs) { nav.back.push(here); nav.fwd = []; }
+      updateNav();
       state.handle = null;
+      if (entry) document.addEventListener('mdv-rendered', () => { $('#content').scrollTop = entry.scroll; }, { once: true });
       await loadUrl(toUrl(abs));
       invoke('watch_file', { path: abs }).catch(e => showError(String(e)));
     }
+    function goBack() { const e = nav.back.pop(); if (!e) return; const here = navHere(); if (here) nav.fwd.push(here); location.hash = e.hash; openPath(e.path, e); }
+    function goForward() { const e = nav.fwd.pop(); if (!e) return; const here = navHere(); if (here) nav.back.push(here); location.hash = e.hash; openPath(e.path, e); }
+    $('#btn-back').addEventListener('click', goBack);
+    $('#btn-fwd').addEventListener('click', goForward);
+    addEventListener('mouseup', (e) => { if (e.button === 3) { e.preventDefault(); goBack(); } else if (e.button === 4) { e.preventDefault(); goForward(); } });
     // Native dialog instead of <input type=file>; the Rust side loads the file into this window if it is empty, else into a new one.
     const pick = () => invoke('open_dialog');
     $('label.btn').addEventListener('click', (e) => { e.preventDefault(); e.stopImmediatePropagation(); pick(); }, true);
@@ -633,6 +652,7 @@
       if (id === 'open') pick(); else if (id === 'reload') reload(); else if (id === 'print') print();
       else if (id === 'toc') $('#btn-toc').click(); else if (id === 'theme') $('#btn-theme').click();
       else if (id === 'update') checkForUpdates(true);
+      else if (id === 'back') goBack(); else if (id === 'forward') goForward();
       else if (id === 'zoom-in') setZoom(zoom + 0.1); else if (id === 'zoom-out') setZoom(zoom - 0.1); else if (id === 'zoom-reset') setZoom(1);
     });
     invoke('take_pending_file').then(p => { if (p) openPath(p); });
@@ -682,6 +702,11 @@
   const fileParam = params.get('file');
   if (fileParam) {
     state.fileParam = fileParam;
+    // The browser's history is the navigation history here; the toolbar buttons just drive it.
+    document.body.classList.add('has-nav');
+    $('#btn-back').disabled = $('#btn-fwd').disabled = false;
+    $('#btn-back').addEventListener('click', () => history.back());
+    $('#btn-fwd').addEventListener('click', () => history.forward());
     loadUrl(fileParam);
     if (window.EventSource) {
       watchServedFile();

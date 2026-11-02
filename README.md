@@ -116,6 +116,7 @@ npx tauri signer generate -w ~/.tauri/markdownviewer.key
 | `t` | Toggle table of contents |
 | `d` | Toggle dark mode |
 | `p` | Print |
+| `⌘[` / `⌘]` | Back / forward between documents opened by following links (app; the browser's own history does this when served) |
 | click a diagram or image | Open it full-window: scroll to zoom, drag to pan, `+` `-` `0`, `Esc` to close |
 
 In the desktop app, **View › Zoom In / Zoom Out / Actual Size** (⌘+ ⌘− ⌘0) scale the document; the browser's own zoom does the same when served by `mdview`.
