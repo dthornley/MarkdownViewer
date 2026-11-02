@@ -4,9 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Markdown Viewer</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
-<link rel="stylesheet" id="hljs-light" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/styles/github.min.css">
-<link rel="stylesheet" id="hljs-dark" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/styles/github-dark.min.css" disabled>
+<script>window.__mdvFailed = []; function __mdvFail(el) { __mdvFailed.push(el.src || el.href); dispatchEvent(new Event('mdv-lib-failed')); }</script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" onerror="__mdvFail(this)">
+<link rel="stylesheet" id="hljs-light" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/styles/github.min.css" onerror="__mdvFail(this)">
+<link rel="stylesheet" id="hljs-dark" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/styles/github-dark.min.css" disabled onerror="__mdvFail(this)">
 <style>
   :root {
     --bg: #ffffff; --fg: #1f2328; --muted: #656d76; --border: #d0d7de;
@@ -111,6 +112,8 @@
   .md .alert-warning { border-color: #9a6700; } .md .alert-warning > p:first-child { color: #9a6700; }
   .md .alert-caution { border-color: #cf222e; } .md .alert-caution > p:first-child { color: #cf222e; }
   #error { color: #cf222e; background: var(--code-bg); padding: 12px 16px; margin: 16px; border-radius: 6px; display: none; white-space: pre-wrap; }
+  #notice { color: #9a6700; background: var(--code-bg); border-left: .25em solid #9a6700; padding: 8px 16px; margin: 16px; border-radius: 6px; display: none; font-size: 13px; }
+  #notice button { float: right; font-size: 11px; padding: 1px 7px; margin-left: 12px; }
   @media (max-width: 800px) { #toc { display: none; } article { padding: 20px; } }
   @media print {
     #toolbar, #toc { display: none !important; }
@@ -133,6 +136,7 @@
   <nav id="toc" class="hidden"></nav>
   <div id="content">
     <div id="error"></div>
+    <div id="notice"></div>
     <article>
       <div id="drop">
         <h2>Drop a Markdown file here</h2>
@@ -144,17 +148,19 @@
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/markdown-it-footnote@4.0.0/dist/markdown-it-footnote.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/markdown-it-task-lists@2.1.1/dist/markdown-it-task-lists.min.js"></script>
-<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/highlight.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js" onerror="__mdvFail(this)"></script>
+<script src="https://cdn.jsdelivr.net/npm/markdown-it-footnote@4.0.0/dist/markdown-it-footnote.min.js" onerror="__mdvFail(this)"></script>
+<script src="https://cdn.jsdelivr.net/npm/markdown-it-task-lists@2.1.1/dist/markdown-it-task-lists.min.js" onerror="__mdvFail(this)"></script>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/highlight.min.js" onerror="__mdvFail(this)"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" onerror="__mdvFail(this)"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onerror="__mdvFail(this)"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js" onerror="__mdvFail(this)"></script>
 <script type="module">
-import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs';
-window.mermaid = mermaid;
-window.dispatchEvent(new Event('mermaid-ready'));
+const url = 'https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs';
+try {
+  window.mermaid = (await import(url)).default;
+  window.dispatchEvent(new Event('mermaid-ready'));
+} catch { __mdvFail({ src: url }); }
 </script>
 <script>
 (() => {
@@ -179,21 +185,44 @@ window.dispatchEvent(new Event('mermaid-ready'));
   applyTheme(theme);
   addEventListener('mermaid-ready', () => { initMermaid(); if (state.source) render(state.source, true); });
 
+  // ---------- CDN failure handling ----------
+  // Required: markdown-it. Everything else degrades gracefully (see showNotice).
+  if (!window.markdownit) {
+    showError('Markdown Viewer needs an internet connection the first time it loads (its rendering libraries come from jsDelivr).\n' +
+      'Failed to load:\n' + (window.__mdvFailed.length ? window.__mdvFailed.join('\n') : '(unknown)'));
+    return;
+  }
+  const FEATURES = [['markdown-it-footnote', 'footnotes'], ['markdown-it-task-lists', 'task lists'], ['highlightjs', 'syntax highlighting'],
+    ['katex', 'math'], ['dompurify', 'inline HTML (sanitizer unavailable, so it is disabled)'], ['mermaid', 'Mermaid diagrams']];
+  function showNotice() {
+    const missing = [...new Set(FEATURES.filter(([k]) => window.__mdvFailed.some(u => u.includes(k))).map(([, name]) => name))];
+    const el = $('#notice');
+    if (!missing.length || el.dataset.dismissed) return;
+    el.textContent = `Offline: ${missing.join(', ')} unavailable until the page is reloaded with an internet connection.`;
+    el.title = 'Failed to load:\n' + window.__mdvFailed.join('\n');
+    const btn = document.createElement('button'); btn.textContent = 'Dismiss';
+    btn.onclick = () => { el.style.display = 'none'; el.dataset.dismissed = '1'; };
+    el.prepend(btn); el.style.display = 'block';
+  }
+  showNotice(); addEventListener('mdv-lib-failed', showNotice); addEventListener('load', showNotice);
+
   // ---------- Markdown engine ----------
   const md = window.markdownit({
-    html: true, linkify: true, typographer: true,
+    html: !!window.DOMPurify, linkify: true, typographer: true,
     highlight(str, lang) {
       if (lang === 'mermaid') return `<pre class="mermaid-src">${md.utils.escapeHtml(str)}</pre>`;
       let body;
-      if (lang && hljs.getLanguage(lang)) {
-        try { body = hljs.highlight(str, { language: lang, ignoreIllegals: true }).value; } catch {}
+      const hl = window.hljs;
+      if (lang && hl?.getLanguage(lang)) {
+        try { body = hl.highlight(str, { language: lang, ignoreIllegals: true }).value; } catch {}
       }
-      if (body === undefined) body = lang ? md.utils.escapeHtml(str) : hljs.highlightAuto(str).value;
+      if (body === undefined) body = lang || !hl ? md.utils.escapeHtml(str) : hl.highlightAuto(str).value;
       const label = lang ? `<span class="lang">${md.utils.escapeHtml(lang)}</span>` : '';
       return `<pre class="hljs">${label}<button class="copy">Copy</button><code class="language-${md.utils.escapeHtml(lang || 'text')}">${body}</code></pre>`;
     },
   });
-  md.use(window.markdownitFootnote).use(window.markdownitTaskLists, { label: true });
+  if (window.markdownitFootnote) md.use(window.markdownitFootnote);
+  if (window.markdownitTaskLists) md.use(window.markdownitTaskLists, { label: true });
 
   // Heading ids + anchors
   const slugify = (s) => s.toLowerCase().trim().replace(/[^\wÀ-￿\- ]+/g, '').replace(/\s+/g, '-');
@@ -275,7 +304,8 @@ window.dispatchEvent(new Event('mermaid-ready'));
 
     let html;
     try { html = md.render(src); } catch (e) { showError('Render error: ' + e.message); return; }
-    html = DOMPurify.sanitize(html, { ADD_TAGS: ['details', 'summary', 'kbd', 'mark', 'sub', 'sup'], ADD_ATTR: ['target', 'open', 'align'] });
+    // Without DOMPurify, md was created with html: false so no raw HTML reaches the page.
+    if (window.DOMPurify) html = DOMPurify.sanitize(html, { ADD_TAGS: ['details', 'summary', 'kbd', 'mark', 'sub', 'sup'], ADD_ATTR: ['target', 'open', 'align'] });
     out.innerHTML = (fm ? `<details class="front-matter"><summary>Front matter</summary><pre><code>${md.utils.escapeHtml(fm)}</code></pre></details>` : '') + html;
     drop.style.display = 'none';
 
