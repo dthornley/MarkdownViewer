@@ -93,6 +93,8 @@ and `xcrun stapler validate release/*.dmg`.
 
 All rendering libraries (markdown-it, highlight.js, Mermaid, KaTeX, DOMPurify) are bundled in `vendor/`, so the viewer works fully offline. Rendered HTML is sanitized with DOMPurify.
 
+The bundled versions are pinned in `scripts/vendor.js`. To upgrade, bump a version there, run `node scripts/vendor.js`, and check `sample.md` still renders.
+
 If a library fails to load (for example `index.html` was copied somewhere without its `vendor/` folder), the page shows a clear error listing the failed files instead of staying blank. Only markdown-it is required: when optional libraries are missing the viewer still renders, with a dismissable warning naming the unavailable features, and inline HTML is disabled when DOMPurify is absent.
 
 ## Layout
@@ -103,5 +105,6 @@ vendor/               bundled rendering libraries (markdown-it, highlight.js, Ka
 bin/mdview.js         CLI: tiny local server with live reload (fs.watch + server-sent events)
 src-tauri/            desktop app shell: Rust side (mdv:// file protocol, watcher, menu), config, icons
 scripts/stage-frontend.js   copies index.html + vendor/ into dist/ for the app build
+scripts/vendor.js           downloads the pinned rendering libraries into vendor/
 scripts/dist.sh       builds, signs, notarizes and packages the macOS app into release/
 ```

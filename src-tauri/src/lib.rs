@@ -100,7 +100,12 @@ fn serve_local_file(request: Request<Vec<u8>>) -> Response<Vec<u8>> {
         .into_owned();
     #[cfg(windows)]
     let path = path.trim_start_matches('/').to_string();
-    let builder = Response::builder().header("Access-Control-Allow-Origin", "*");
+    // Only the viewer's own webview origin may read these responses.
+    #[cfg(not(windows))]
+    let origin = "tauri://localhost";
+    #[cfg(windows)]
+    let origin = "http://tauri.localhost";
+    let builder = Response::builder().header("Access-Control-Allow-Origin", origin);
     let result = std::fs::read(&path);
     log::debug!("mdv:// {} -> {}", path, if result.is_ok() { "200" } else { "404" });
     match result {

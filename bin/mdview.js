@@ -49,9 +49,16 @@ function onFsEvent(event, name) {
 }
 try { fs.watch(root, { recursive: true }, onFsEvent); } catch { fs.watch(root, onFsEvent); }
 
+// Only answer requests addressed to this machine. A web page you visit elsewhere could
+// otherwise point a hostname it controls at 127.0.0.1 (DNS rebinding) and read the served folder.
+const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
+
 const server = http.createServer((req, res) => {
-  const url = new URL(req.url, 'http://localhost');
-  const pathname = decodeURIComponent(url.pathname);
+  const host = (req.headers.host || '').replace(/:\d+$/, '').toLowerCase();
+  if (!LOCAL_HOSTS.has(host)) { res.writeHead(403); return res.end('Forbidden'); }
+  let url, pathname;
+  try { url = new URL(req.url, 'http://localhost'); pathname = decodeURIComponent(url.pathname); }
+  catch { res.writeHead(400); return res.end('Bad request'); }
 
   if (pathname === '/' || pathname === '/index.html') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
