@@ -36,7 +36,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
+    "targets": [
+      "app",
+      "dmg"
+    ],
     "category": "Productivity",
     "shortDescription": "Markdown viewer",
     "longDescription": "A simple, friendly viewer for Markdown files with GitHub-flavored Markdown, Mermaid diagrams, math and syntax highlighting. Works offline.",
@@ -49,7 +52,12 @@
     ],
     "fileAssociations": [
       {
-        "ext": ["md", "markdown", "mdown", "mkd"],
+        "ext": [
+          "md",
+          "markdown",
+          "mdown",
+          "mkd"
+        ],
         "name": "Markdown Document",
         "description": "Markdown document",
         "role": "Viewer",
@@ -59,6 +67,14 @@
     "macOS": {
       "minimumSystemVersion": "11.0",
       "hardenedRuntime": true
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY0RTNDRkY4RDlEMzY5MzIKUldReWFkUForTS9qWk1EM1NCbVZiL1IxZkJaU0ttK3Jzbm5CckdHMlRGMjJORGNtT3Jhbmx2QWMK",
+      "endpoints": [
+        "https://github.com/dthornley/MarkdownViewer/releases/latest/download/latest.json"
+      ]
     }
   }
 }
