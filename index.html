@@ -160,7 +160,8 @@ window.dispatchEvent(new Event('mermaid-ready'));
 (() => {
   const $ = (s) => document.querySelector(s);
   const out = $('#out'), toc = $('#toc'), drop = $('#drop'), titleEl = $('#title'), errEl = $('#error');
-  const state = { fileName: null, handle: null, baseUrl: null, source: '' };
+  // fileParam: path (relative to the mdview server root) of the file currently shown in served mode, or null.
+  const state = { fileName: null, handle: null, baseUrl: null, source: '', fileParam: null };
   let mermaidGen = 0;
 
   // ---------- Theme ----------
@@ -253,8 +254,10 @@ window.dispatchEvent(new Event('mermaid-ready'));
     if (/^[a-z]+:|^\/\//i.test(href)) { t.attrSet('target', '_blank'); t.attrSet('rel', 'noopener noreferrer'); }
     else if (state.baseUrl && !href.startsWith('#')) {
       const u = new URL(href, state.baseUrl);
-      if (/\.(md|markdown|mdown|mkd)$/i.test(u.pathname) && location.search.includes('file=')) {
-        t.attrSet('href', `${location.pathname}?file=${encodeURIComponent(u.pathname.replace(/^\/+/, ''))}${u.hash}`);
+      if (/\.(md|markdown|mdown|mkd)$/i.test(u.pathname) && state.fileParam) {
+        // Served mode: point at the viewer so middle-click / open-in-new-tab also stay in the viewer.
+        // Left-clicks are intercepted below and loaded in place.
+        t.attrSet('href', `${location.pathname}?file=${encodeURIComponent(decodeURIComponent(u.pathname).replace(/^\/+/, ''))}${u.hash}`);
       } else t.attrSet('href', u.href);
     }
     return defaultLinkOpen(tokens, idx, opts, env, self);
@@ -409,18 +412,55 @@ window.dispatchEvent(new Event('mermaid-ready'));
     else if (e.key === 'd') $('#btn-theme').click(); else if (e.key === 'p') { e.preventDefault(); print(); }
   });
 
+  // ---------- Served mode (mdview): in-viewer navigation between .md files ----------
+  const MD_EXT = /\.(md|markdown|mdown|mkd)$/i;
+  let lastMtime = null; // mtime of state.fileParam as last seen by the poll below
+  // Show another file from the served root in place. `rel` is relative to the server root.
+  function openServedFile(rel, hash = '', push = true) {
+    state.fileParam = rel; lastMtime = null;
+    if (push) history.pushState({ file: rel }, '', `${location.pathname}?file=${encodeURIComponent(rel)}${hash}`);
+    if (!hash) $('#content').scrollTop = 0;
+    loadUrl(rel);
+  }
+  // Intercept left-clicks on relative .md links so they open in the viewer instead of as raw text.
+  out.addEventListener('click', (e) => {
+    const a = e.target.closest('a[href]');
+    if (!a || !out.contains(a) || !state.fileParam) return;
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || a.target === '_blank') return;
+    const raw = a.getAttribute('href');
+    if (!raw || /^(https?:|mailto:|[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(raw)) return;
+    let u;
+    try { u = new URL(raw, new URL(state.fileParam, location.href)); } catch { return; }
+    if (u.origin !== location.origin) return;
+    let rel;
+    if (u.pathname === location.pathname && u.searchParams.has('file')) rel = u.searchParams.get('file'); // already rewritten by link_open
+    else if (MD_EXT.test(u.pathname)) { try { rel = decodeURIComponent(u.pathname).replace(/^\/+/, ''); } catch { return; } }
+    else return;
+    // Leave anything that is not a plain path inside the served root to the browser.
+    if (!rel || !MD_EXT.test(rel) || rel.split('/').some(seg => seg === '..' || seg === '')) return;
+    e.preventDefault();
+    if (rel === state.fileParam) { if (u.hash) location.hash = u.hash; else openServedFile(rel, '', false); return; }
+    openServedFile(rel, u.hash, true);
+  });
+  // Back/forward: load whatever file the URL now names.
+  addEventListener('popstate', () => {
+    if (!state.fileParam) return;
+    const rel = new URLSearchParams(location.search).get('file');
+    if (rel && rel !== state.fileParam) openServedFile(rel, location.hash, false);
+  });
+
   // Auto-refresh when served by mdview (polls mtime)
   const params = new URLSearchParams(location.search);
   const fileParam = params.get('file');
   if (fileParam) {
+    state.fileParam = fileParam;
     loadUrl(fileParam);
-    let lastMtime = null;
     setInterval(async () => {
       try {
-        const r = await fetch(`/__mtime?file=${encodeURIComponent(fileParam)}`, { cache: 'no-store' });
+        const r = await fetch(`/__mtime?file=${encodeURIComponent(state.fileParam)}`, { cache: 'no-store' });
         if (!r.ok) return;
         const { mtime } = await r.json();
-        if (lastMtime !== null && mtime !== lastMtime) loadUrl(fileParam);
+        if (lastMtime !== null && mtime !== lastMtime) loadUrl(state.fileParam);
         lastMtime = mtime;
       } catch {}
     }, 1000);
