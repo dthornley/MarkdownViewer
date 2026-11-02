@@ -10,18 +10,7 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [
-      {
-        "label": "main",
-        "title": "Markdown Viewer",
-        "width": 1100,
-        "height": 800,
-        "minWidth": 480,
-        "minHeight": 320,
-        "resizable": true,
-        "dragDropEnabled": true
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": {
         "default-src": "'self'",

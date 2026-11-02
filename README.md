@@ -13,7 +13,7 @@ A simple, friendly viewer for Markdown files. One HTML file, no build step. Use 
 - Table of contents sidebar with scroll tracking, heading anchors
 - Light and dark themes, print / save as PDF
 - Works fully offline: all rendering libraries are bundled
-- macOS app (Tauri): opens `.md` files from Finder, drag and drop onto the window, live reload
+- macOS app (Tauri): opens `.md` files from Finder, drag and drop onto the window, live reload, one window per document (or tabs), Open Recent, and the open documents come back on relaunch
 - Drag and drop, file picker, or paste Markdown straight into the page
 - Live reload when opened through the `mdview` command (server-sent events, keeps your scroll position)
 - Relative links to other `.md` files open inside the viewer; back and forward work
@@ -47,6 +47,8 @@ open -a "Markdown Viewer" README.md
 ```
 
 Edits to the open file show up immediately, relative images resolve against the file, links to other Markdown files open in the app, and external links open in your browser.
+
+Each document opens in its own window; **File › New Window** (⌘N) gives an empty one and **File › Open Recent** lists the last ten files. Turn on **View › Open Documents in Tabs** to have new documents join the front window as tabs instead; windows and tabs can be mixed freely with the usual macOS **Window** menu commands (Merge All Windows, Move Tab to New Window). Whatever is open when you quit, or when an update relaunches the app, is reopened next time.
 
 **Download:** the latest `.dmg` is on the [Releases page](https://github.com/dthornley/MarkdownViewer/releases) (Apple Silicon). The app checks for a newer release a few seconds after launch and offers to install it; **Markdown Viewer › Check for Updates…** does the same on demand.
 
