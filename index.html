@@ -170,13 +170,13 @@ window.dispatchEvent(new Event('mermaid-ready'));
     theme = t; document.documentElement.dataset.theme = t; localStorage.setItem('mdv-theme', t);
     $('#hljs-light').disabled = t === 'dark'; $('#hljs-dark').disabled = t !== 'dark';
     $('#btn-theme').textContent = t === 'dark' ? 'Light' : 'Dark';
-    if (window.mermaid) { initMermaid(); if (state.source) render(state.source); }
+    if (window.mermaid) { initMermaid(); if (state.source) render(state.source, true); }
   }
   function initMermaid() {
     window.mermaid.initialize({ startOnLoad: false, theme: theme === 'dark' ? 'dark' : 'default', securityLevel: 'strict' });
   }
   applyTheme(theme);
-  addEventListener('mermaid-ready', () => { initMermaid(); if (state.source) render(state.source); });
+  addEventListener('mermaid-ready', () => { initMermaid(); if (state.source) render(state.source, true); });
 
   // ---------- Markdown engine ----------
   const md = window.markdownit({
@@ -261,8 +261,10 @@ window.dispatchEvent(new Event('mermaid-ready'));
   };
 
   // ---------- Render ----------
-  async function render(src) {
+  // keep: re-render of the same document (reload, theme change) – preserve the scroll offset instead of honouring the hash.
+  async function render(src, keep) {
     state.source = src; errEl.style.display = 'none';
+    const content = $('#content'), scrollTop = content.scrollTop;
     // Strip YAML front matter and show it as a table
     let fm = null;
     const fmMatch = /^---\s*\n([\s\S]*?)\n---\s*\n/.exec(src);
@@ -294,6 +296,7 @@ window.dispatchEvent(new Event('mermaid-ready'));
     }));
 
     buildToc();
+    if (keep) content.scrollTop = scrollTop;
 
     // Mermaid
     const blocks = [...out.querySelectorAll('pre.mermaid-src')];
@@ -316,7 +319,8 @@ window.dispatchEvent(new Event('mermaid-ready'));
       blocks.forEach((pre, i) => pre.replaceWith(divs[i]));
     }
 
-    if (location.hash) { const el = document.getElementById(decodeURIComponent(location.hash.slice(1))); el?.scrollIntoView(); }
+    if (keep) content.scrollTop = scrollTop; // diagrams change the layout height, so restore again
+    else if (location.hash) { const el = document.getElementById(decodeURIComponent(location.hash.slice(1))); el?.scrollIntoView(); }
   }
 
   function showError(msg) { errEl.textContent = msg; errEl.style.display = 'block'; }
@@ -347,18 +351,18 @@ window.dispatchEvent(new Event('mermaid-ready'));
     titleEl.append(name || 'Markdown Viewer');
     document.title = name ? `${name} – Markdown Viewer` : 'Markdown Viewer';
   }
-  async function loadFile(file, handle) {
+  async function loadFile(file, handle, keep) {
     state.handle = handle || null; state.baseUrl = null;
     setTitle(file.name);
-    render(await file.text());
+    render(await file.text(), keep);
   }
-  async function loadUrl(url) {
+  async function loadUrl(url, keep) {
     try {
       const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       state.baseUrl = new URL(url, location.href).href;
       setTitle(decodeURIComponent(url.split('/').pop().split('?')[0]));
-      render(await res.text());
+      render(await res.text(), keep);
     } catch (e) { showError(`Could not load ${url}: ${e.message}`); }
   }
 
@@ -395,9 +399,9 @@ window.dispatchEvent(new Event('mermaid-ready'));
 
   // Toolbar
   async function reload() {
-    if (state.handle) loadFile(await state.handle.getFile(), state.handle);
-    else if (state.baseUrl) loadUrl(state.baseUrl);
-    else if (state.source) render(state.source);
+    if (state.handle) loadFile(await state.handle.getFile(), state.handle, true);
+    else if (state.baseUrl) loadUrl(state.baseUrl, true);
+    else if (state.source) render(state.source, true);
   }
   $('#btn-reload').addEventListener('click', reload);
   $('#btn-toc').addEventListener('click', () => {
@@ -422,7 +426,7 @@ window.dispatchEvent(new Event('mermaid-ready'));
         const r = await fetch(`/__mtime?file=${encodeURIComponent(fileParam)}`, { cache: 'no-store' });
         if (!r.ok) return;
         const { mtime } = await r.json();
-        if (lastMtime !== null && mtime !== lastMtime) loadUrl(fileParam);
+        if (lastMtime !== null && mtime !== lastMtime) loadUrl(fileParam, true);
         lastMtime = mtime;
       } catch {}
     }, 1000);
