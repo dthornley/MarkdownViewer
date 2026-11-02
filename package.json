@@ -10,7 +10,8 @@
     "app:dev": "tauri dev",
     "dist": "./scripts/dist.sh",
     "dist:unsigned": "./scripts/dist.sh --unsigned",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "release": "./scripts/release.sh"
   },
   "license": "MIT",
   "devDependencies": {

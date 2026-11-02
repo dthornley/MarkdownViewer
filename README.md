@@ -48,7 +48,7 @@ open -a "Markdown Viewer" README.md
 
 Edits to the open file show up immediately, relative images resolve against the file, links to other Markdown files open in the app, and external links open in your browser.
 
-**Download:** the latest `.dmg` is on the [Releases page](https://github.com/dthornley/MarkdownViewer/releases) (Apple Silicon).
+**Download:** the latest `.dmg` is on the [Releases page](https://github.com/dthornley/MarkdownViewer/releases) (Apple Silicon). The app checks for a newer release a few seconds after launch and offers to install it; **Markdown Viewer › Check for Updates…** does the same on demand.
 
 ### Building the app
 
@@ -80,6 +80,30 @@ Verify a build with `codesign --verify --deep --strict "release/Markdown Viewer.
 `spctl --assess --type execute "release/Markdown Viewer.app"` (expect `Notarized Developer ID`)
 and `xcrun stapler validate release/*.dmg`.
 
+### Publishing a release
+
+Releases are built locally and uploaded to GitHub Releases; there is no CI build.
+
+```sh
+npm run release -- 1.1.0   # bump, build, sign, notarize, tag, push and publish
+npm run release            # same, using the version already in package.json
+```
+
+`scripts/release.sh` runs `npm run dist`, then adds the two files the in-app updater needs: the notarized
+app as `Markdown-Viewer-<version>-arm64.app.tar.gz` with a detached signature, and `latest.json`, which
+the app downloads from `releases/latest/download/latest.json` to learn about new versions. Release notes
+come from `RELEASE_NOTES.md` when present, otherwise from the commits since the previous tag.
+
+The update signature uses a key pair separate from Apple's: the private key lives at
+`~/.tauri/markdownviewer.key` (or `TAURI_SIGNING_PRIVATE_KEY_PATH`) and the public key is in
+`src-tauri/tauri.conf.json` under `plugins.updater.pubkey`. Back the private key up somewhere safe; the
+updater refuses archives signed with any other key, so losing it means shipping the next version by hand.
+To set up a new Mac, copy that file over, or generate a fresh pair and commit the new public key:
+
+```sh
+npx tauri signer generate -w ~/.tauri/markdownviewer.key
+```
+
 ## Keyboard shortcuts
 
 | Key | Action |
@@ -107,4 +131,5 @@ src-tauri/            desktop app shell: Rust side (mdv:// file protocol, watche
 scripts/stage-frontend.js   copies index.html + vendor/ into dist/ for the app build
 scripts/vendor.js           downloads the pinned rendering libraries into vendor/
 scripts/dist.sh       builds, signs, notarizes and packages the macOS app into release/
+scripts/release.sh    runs dist.sh, signs the update archive and publishes a GitHub release
 ```

@@ -19,8 +19,9 @@ PROFILE="${APPLE_KEYCHAIN_PROFILE:-MarkdownViewer}"
 BUNDLE_DIR="src-tauri/target/release/bundle"
 APP="$BUNDLE_DIR/macos/$PRODUCT.app"
 OUT="release"
-DMG="$OUT/$PRODUCT-$VERSION-$ARCH.dmg"
-ZIP="$OUT/$PRODUCT-$VERSION-$ARCH.zip"
+BASENAME="${PRODUCT// /-}-$VERSION-$ARCH"   # no spaces: GitHub rewrites them in release asset names
+DMG="$OUT/$BASENAME.dmg"
+ZIP="$OUT/$BASENAME.zip"
 
 rm -rf "$OUT"; mkdir -p "$OUT"
 

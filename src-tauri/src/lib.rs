@@ -129,6 +129,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     let print = MenuItemBuilder::with_id("print", "Print…").accelerator("CmdOrCtrl+P").build(app)?;
     let toc = MenuItemBuilder::with_id("toc", "Toggle Table of Contents").accelerator("CmdOrCtrl+Shift+T").build(app)?;
     let theme = MenuItemBuilder::with_id("theme", "Toggle Dark Mode").accelerator("CmdOrCtrl+Shift+D").build(app)?;
+    let update = MenuItemBuilder::with_id("update", "Check for Updates…").build(app)?;
 
     let file = SubmenuBuilder::new(app, "File")
         .item(&open).item(&reload).separator().item(&print).separator().close_window()
@@ -136,16 +137,17 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     let edit = SubmenuBuilder::new(app, "Edit")
         .undo().redo().separator().cut().copy().paste().select_all()
         .build()?;
-    let view = SubmenuBuilder::new(app, "View")
-        .item(&toc).item(&theme).separator().fullscreen()
-        .build()?;
+    #[cfg(target_os = "macos")]
+    let view = SubmenuBuilder::new(app, "View").item(&toc).item(&theme).separator().fullscreen().build()?;
+    #[cfg(not(target_os = "macos"))]
+    let view = SubmenuBuilder::new(app, "View").item(&toc).item(&theme).separator().fullscreen().separator().item(&update).build()?;
     let window = SubmenuBuilder::new(app, "Window").minimize().maximize().build()?;
 
     let mut menu = MenuBuilder::new(app);
     #[cfg(target_os = "macos")]
     {
         let app_menu = SubmenuBuilder::new(app, "Markdown Viewer")
-            .about(None).separator().services().separator().hide().hide_others().show_all().separator().quit()
+            .about(None).item(&update).separator().services().separator().hide().hide_others().show_all().separator().quit()
             .build()?;
         menu = menu.item(&app_menu);
     }
@@ -162,6 +164,8 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(AppState::default())
         .register_uri_scheme_protocol("mdv", |_ctx, request| serve_local_file(request))
         .invoke_handler(tauri::generate_handler![take_pending_file, watch_file, pick_file])
