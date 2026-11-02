@@ -591,8 +591,8 @@
       await loadUrl(toUrl(abs));
       invoke('watch_file', { path: abs }).catch(e => showError(String(e)));
     }
-    const pick = async () => { const p = await invoke('pick_file'); if (p) { location.hash = ''; openPath(p); } };
-    // Native dialog instead of <input type=file>, so we get a path to watch and resolve against.
+    // Native dialog instead of <input type=file>; the Rust side loads the file into this window if it is empty, else into a new one.
+    const pick = () => invoke('open_dialog');
     $('label.btn').addEventListener('click', (e) => { e.preventDefault(); e.stopImmediatePropagation(); pick(); }, true);
     // Relative .md links open in the app; external links go to the default browser.
     out.addEventListener('click', (e) => {
@@ -605,6 +605,8 @@
     });
     // Files: Finder / Dock / command line, drag and drop, change notifications, menu.
     listen('open-file', (e) => { location.hash = ''; openPath(e.payload); });
+    // Theme and TOC choices are shared between windows through localStorage.
+    addEventListener('storage', (e) => { if (e.key === 'mdv-theme' && e.newValue && e.newValue !== theme) applyTheme(e.newValue); });
     listen('tauri://drag-enter', () => document.body.classList.add('dragging'));
     listen('tauri://drag-leave', () => document.body.classList.remove('dragging'));
     listen('tauri://drag-drop', (e) => { document.body.classList.remove('dragging'); const p = e.payload.paths?.[0]; if (p) { location.hash = ''; openPath(p); } });

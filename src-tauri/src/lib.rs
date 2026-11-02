@@ -1,74 +1,250 @@
 // Markdown Viewer desktop app: a thin Tauri shell around index.html.
 //
-// The frontend is the same single page the `mdview` CLI serves. In the app it
-// reads documents through the `mdv://` protocol below (so relative images and
-// links resolve exactly like they do over HTTP), gets change notifications from
-// a notify watcher, and receives files opened from Finder / the command line.
+// The frontend is the same single page the `mdview` CLI serves. Each document gets
+// its own window (macOS can show those as tabs); the page reads its document through
+// the `mdv://` protocol below (so relative images and links resolve exactly like they
+// do over HTTP), gets change notifications from a notify watcher, and receives files
+// opened from Finder, the command line, the Open Recent menu or the last session.
 
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Mutex,
+    },
 };
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use tauri::{
     http::{Request, Response},
-    menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder},
-    AppHandle, Emitter, Manager, State,
+    menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, SubmenuBuilder},
+    AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Window,
 };
+
+const MAX_RECENT: usize = 10;
 
 #[derive(Default)]
 struct AppState {
-    /// File the app was asked to open before the page was ready to receive events.
-    pending: Mutex<Option<String>>,
-    /// Watcher for the document currently shown; replaced whenever the document changes.
-    watcher: Mutex<Option<RecommendedWatcher>>,
+    /// Window label -> document shown in it. Windows without a document are not listed.
+    docs: Mutex<HashMap<String, String>>,
+    /// Window label -> file handed to it before its page was ready to receive events.
+    pending: Mutex<HashMap<String, String>>,
+    /// Window label -> watcher for its document; replaced whenever the document changes.
+    watchers: Mutex<HashMap<String, RecommendedWatcher>>,
+    /// Most recently opened first.
+    recent: Mutex<Vec<String>>,
+    /// View › Open Documents in Tabs.
+    tabs: AtomicBool,
+    /// Set once the app is quitting, so closing windows stop rewriting the session.
+    quitting: AtomicBool,
+    counter: AtomicUsize,
 }
 
-/// Remember `path` for the page to pick up, and tell it right away if it is already listening.
-fn open_in_frontend(app: &AppHandle, path: String) {
-    log::info!("open requested: {path}");
-    *app.state::<AppState>().pending.lock().unwrap() = Some(path.clone());
-    let _ = app.emit("open-file", path);
+// ---------- small JSON files in the app data directory ----------
+
+fn data_file(app: &AppHandle, name: &str) -> Option<PathBuf> {
+    let dir = app.path().app_data_dir().ok()?;
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join(name))
 }
+
+fn read_json<T: serde::de::DeserializeOwned + Default>(app: &AppHandle, name: &str) -> T {
+    data_file(app, name)
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+fn write_json<T: serde::Serialize>(app: &AppHandle, name: &str, value: &T) {
+    if let Some(p) = data_file(app, name) {
+        if let Err(e) = std::fs::write(&p, serde_json::to_vec_pretty(value).unwrap_or_default()) {
+            log::warn!("could not write {}: {e}", p.display());
+        }
+    }
+}
+
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct Settings {
+    tabs: bool,
+}
+
+fn save_session(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    if state.quitting.load(Ordering::Relaxed) {
+        return;
+    }
+    let mut paths: Vec<String> = state.docs.lock().unwrap().values().cloned().collect();
+    paths.sort();
+    write_json(app, "session.json", &paths);
+}
+
+fn add_recent(app: &AppHandle, path: &str) {
+    let state = app.state::<AppState>();
+    {
+        let mut recent = state.recent.lock().unwrap();
+        recent.retain(|p| p != path);
+        recent.insert(0, path.to_string());
+        recent.truncate(MAX_RECENT);
+        write_json(app, "recent.json", &*recent);
+    }
+    if let Err(e) = build_menu(app) {
+        log::warn!("menu rebuild failed: {e}");
+    }
+}
+
+// ---------- windows ----------
+
+#[cfg(target_os = "macos")]
+fn apply_tabbing(window: &WebviewWindow, tabs: bool) {
+    use objc2_app_kit::{NSWindow, NSWindowTabbingMode};
+    if let Ok(ptr) = window.ns_window() {
+        let ns: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
+        ns.setTabbingMode(if tabs { NSWindowTabbingMode::Preferred } else { NSWindowTabbingMode::Automatic });
+    }
+}
+
+/// Create a document window. With `path`, the page picks the file up as soon as it is ready.
+fn new_window(app: &AppHandle, path: Option<String>) {
+    let state = app.state::<AppState>();
+    let n = state.counter.fetch_add(1, Ordering::Relaxed);
+    let label = format!("doc-{n}");
+    if let Some(p) = &path {
+        state.pending.lock().unwrap().insert(label.clone(), p.clone());
+        state.docs.lock().unwrap().insert(label.clone(), p.clone());
+    }
+    let offset = 40.0 + 28.0 * ((n % 8) as f64);
+    let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
+        .title("Markdown Viewer")
+        .inner_size(1100.0, 800.0)
+        .min_inner_size(480.0, 320.0)
+        .position(offset, offset)
+        .visible(false);
+    #[cfg(target_os = "macos")]
+    let builder = builder.tabbing_identifier("com.thornley.markdownviewer.document");
+    match builder.build() {
+        Ok(window) => {
+            let tabs = state.tabs.load(Ordering::Relaxed);
+            let w = window.clone();
+            // Tabbing mode must be set before the window is first shown for AppKit to group it.
+            let _ = window.run_on_main_thread(move || {
+                #[cfg(target_os = "macos")]
+                apply_tabbing(&w, tabs);
+                #[cfg(not(target_os = "macos"))]
+                let _ = tabs;
+                let _ = w.show();
+                let _ = w.set_focus();
+            });
+            log::info!("window {label}: {}", path.as_deref().unwrap_or("(empty)"));
+            if path.is_some() {
+                save_session(app);
+            }
+        }
+        Err(e) => log::error!("could not create window: {e}"),
+    }
+}
+
+fn set_tabs(app: &AppHandle, tabs: bool) {
+    let state = app.state::<AppState>();
+    state.tabs.store(tabs, Ordering::Relaxed);
+    write_json(app, "settings.json", &Settings { tabs });
+    #[cfg(target_os = "macos")]
+    for window in app.webview_windows().values() {
+        apply_tabbing(window, tabs);
+    }
+}
+
+/// Show `path`: focus the window already showing it, reuse an empty window, or open a new one.
+fn open_document(app: &AppHandle, path: PathBuf) {
+    let path = path.canonicalize().unwrap_or(path);
+    if !path.is_file() {
+        log::warn!("not a file: {}", path.display());
+        return;
+    }
+    let path = path.to_string_lossy().into_owned();
+    let state = app.state::<AppState>();
+    let windows = app.webview_windows();
+    let (existing, empty) = {
+        let docs = state.docs.lock().unwrap();
+        let existing = docs.iter().find(|(_, p)| **p == path).map(|(l, _)| l.clone());
+        let mut empties: Vec<&String> = windows.keys().filter(|l| !docs.contains_key(*l)).collect();
+        empties.sort_by_key(|l| !windows[*l].is_focused().unwrap_or(false)); // focused first
+        (existing, empties.first().map(|l| (*l).clone()))
+    };
+    if let Some(label) = existing {
+        if let Some(w) = windows.get(&label) {
+            let _ = w.set_focus();
+            return;
+        }
+    }
+    match empty {
+        Some(label) => {
+            log::info!("open {path} in empty window {label}");
+            state.pending.lock().unwrap().insert(label.clone(), path.clone());
+            let _ = windows[&label].set_focus();
+            let _ = app.emit_to(&label, "open-file", &path);
+        }
+        None => new_window(app, Some(path)),
+    }
+}
+
+/// The window whose menu shortcut or menu click this is.
+fn focused_window(app: &AppHandle) -> Option<WebviewWindow> {
+    app.webview_windows().into_values().find(|w| w.is_focused().unwrap_or(false))
+}
+
+// ---------- commands ----------
 
 #[tauri::command]
-fn take_pending_file(state: State<'_, AppState>) -> Option<String> {
-    state.pending.lock().unwrap().take()
+fn take_pending_file(window: Window, state: State<'_, AppState>) -> Option<String> {
+    state.pending.lock().unwrap().remove(window.label())
 }
 
 /// Watch `path` (via its parent directory, so editors that save by rename are seen too)
-/// and emit `file-changed` on every event touching it. The page debounces.
+/// and emit `file-changed` to this window on every event touching it. The page debounces.
+/// Called whenever a window starts showing a document, so this also records it.
 #[tauri::command]
-fn watch_file(app: AppHandle, state: State<'_, AppState>, path: String) -> Result<(), String> {
+fn watch_file(app: AppHandle, window: Window, state: State<'_, AppState>, path: String) -> Result<(), String> {
     let target = PathBuf::from(&path);
     let dir = target.parent().ok_or("file has no parent directory")?.to_path_buf();
     let name = target.file_name().ok_or("path has no file name")?.to_os_string();
+    let label = window.label().to_string();
+    let (emit_app, emit_label, emit_path) = (app.clone(), label.clone(), path.clone());
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         if let Ok(ev) = res {
             if ev.paths.iter().any(|p| p.file_name() == Some(name.as_os_str())) {
-                log::debug!("changed: {path} ({:?})", ev.kind);
-                let _ = app.emit("file-changed", &path);
+                log::debug!("changed: {emit_path} ({:?})", ev.kind);
+                let _ = emit_app.emit_to(&emit_label, "file-changed", &emit_path);
             }
         }
     })
     .map_err(|e| e.to_string())?;
     watcher.watch(&dir, RecursiveMode::NonRecursive).map_err(|e| e.to_string())?;
-    log::info!("watching {}", target.display());
-    *state.watcher.lock().unwrap() = Some(watcher); // drops the previous watcher
+    log::info!("{label} watching {}", target.display());
+    state.watchers.lock().unwrap().insert(label.clone(), watcher); // drops the previous watcher
+    state.docs.lock().unwrap().insert(label, path.clone());
+    save_session(&app);
+    add_recent(&app, &path);
     Ok(())
 }
 
+/// Native open dialog; the chosen file goes to this window if it is empty, else to a new one.
 #[tauri::command]
-async fn pick_file(app: AppHandle) -> Option<String> {
+async fn open_dialog(app: AppHandle) {
     use tauri_plugin_dialog::DialogExt;
-    app.dialog()
+    let picked = app
+        .dialog()
         .file()
         .add_filter("Markdown", &["md", "markdown", "mdown", "mkd", "txt"])
-        .blocking_pick_file()
-        .and_then(|f| f.into_path().ok())
-        .map(|p| p.to_string_lossy().into_owned())
+        .blocking_pick_files();
+    for file in picked.unwrap_or_default() {
+        if let Ok(p) = file.into_path() {
+            open_document(&app, p);
+        }
+    }
 }
+
+// ---------- mdv:// protocol ----------
 
 fn mime_for(path: &str) -> &'static str {
     match Path::new(path).extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
@@ -123,7 +299,11 @@ fn serve_local_file(request: Request<Vec<u8>>) -> Response<Vec<u8>> {
     }
 }
 
+// ---------- menu ----------
+
 fn build_menu(app: &AppHandle) -> tauri::Result<()> {
+    let state = app.state::<AppState>();
+    let new_win = MenuItemBuilder::with_id("new", "New Window").accelerator("CmdOrCtrl+N").build(app)?;
     let open = MenuItemBuilder::with_id("open", "Open…").accelerator("CmdOrCtrl+O").build(app)?;
     let reload = MenuItemBuilder::with_id("reload", "Reload").accelerator("CmdOrCtrl+R").build(app)?;
     let print = MenuItemBuilder::with_id("print", "Print…").accelerator("CmdOrCtrl+P").build(app)?;
@@ -133,18 +313,36 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     let zoom_in = MenuItemBuilder::with_id("zoom-in", "Zoom In").accelerator("CmdOrCtrl+=").build(app)?;
     let zoom_out = MenuItemBuilder::with_id("zoom-out", "Zoom Out").accelerator("CmdOrCtrl+-").build(app)?;
     let zoom_reset = MenuItemBuilder::with_id("zoom-reset", "Actual Size").accelerator("CmdOrCtrl+0").build(app)?;
+    let tabs = CheckMenuItemBuilder::with_id("tabs", "Open Documents in Tabs")
+        .checked(state.tabs.load(Ordering::Relaxed))
+        .build(app)?;
+
+    let mut recent_menu = SubmenuBuilder::new(app, "Open Recent");
+    let recent = state.recent.lock().unwrap().clone();
+    for path in &recent {
+        let name = Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.clone());
+        recent_menu = recent_menu.item(&MenuItemBuilder::with_id(format!("recent:{path}"), name).build(app)?);
+    }
+    if !recent.is_empty() {
+        recent_menu = recent_menu.separator();
+    }
+    let clear = MenuItemBuilder::with_id("recent-clear", "Clear Menu").enabled(!recent.is_empty()).build(app)?;
+    let recent_menu = recent_menu.item(&clear).build()?;
 
     let file = SubmenuBuilder::new(app, "File")
-        .item(&open).item(&reload).separator().item(&print).separator().close_window()
+        .item(&new_win).item(&open).item(&recent_menu).item(&reload).separator().item(&print).separator().close_window()
         .build()?;
     let edit = SubmenuBuilder::new(app, "Edit")
         .undo().redo().separator().cut().copy().paste().select_all()
         .build()?;
-    #[cfg(target_os = "macos")]
-    let view = SubmenuBuilder::new(app, "View").item(&toc).item(&theme).separator().item(&zoom_in).item(&zoom_out).item(&zoom_reset).separator().fullscreen().build()?;
+    let view = SubmenuBuilder::new(app, "View")
+        .item(&toc).item(&theme).separator().item(&zoom_in).item(&zoom_out).item(&zoom_reset).separator().item(&tabs).separator().fullscreen();
     #[cfg(not(target_os = "macos"))]
-    let view = SubmenuBuilder::new(app, "View").item(&toc).item(&theme).separator().item(&zoom_in).item(&zoom_out).item(&zoom_reset).separator().fullscreen().separator().item(&update).build()?;
-    let window = SubmenuBuilder::new(app, "Window").minimize().maximize().build()?;
+    let view = view.separator().item(&update);
+    let view = view.build()?;
+    let window = SubmenuBuilder::new(app, "Window").minimize().maximize().separator().build()?;
+    #[cfg(target_os = "macos")]
+    window.set_as_windows_menu_for_nsapp()?; // AppKit adds the window list and tab commands here
 
     let mut menu = MenuBuilder::new(app);
     #[cfg(target_os = "macos")]
@@ -156,11 +354,37 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     }
     let menu = menu.item(&file).item(&edit).item(&view).item(&window).build()?;
     app.set_menu(menu)?;
-    app.on_menu_event(|app, ev| {
-        let _ = app.emit("menu", ev.id().0.clone());
-    });
     Ok(())
 }
+
+fn on_menu(app: &AppHandle, id: &str) {
+    match id {
+        "new" => new_window(app, None),
+        "open" => {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move { open_dialog(app).await });
+        }
+        "recent-clear" => {
+            app.state::<AppState>().recent.lock().unwrap().clear();
+            write_json(app, "recent.json", &Vec::<String>::new());
+            let _ = build_menu(app);
+        }
+        "tabs" => {
+            let tabs = !app.state::<AppState>().tabs.load(Ordering::Relaxed);
+            set_tabs(app, tabs);
+            let _ = build_menu(app);
+        }
+        _ if id.starts_with("recent:") => open_document(app, PathBuf::from(&id["recent:".len()..])),
+        // Everything else acts on the document in the front window.
+        _ => {
+            if let Some(w) = focused_window(app) {
+                let _ = app.emit_to(w.label(), "menu", id);
+            }
+        }
+    }
+}
+
+// ---------- app ----------
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -171,7 +395,25 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(AppState::default())
         .register_uri_scheme_protocol("mdv", |_ctx, request| serve_local_file(request))
-        .invoke_handler(tauri::generate_handler![take_pending_file, watch_file, pick_file])
+        .invoke_handler(tauri::generate_handler![take_pending_file, watch_file, open_dialog])
+        .on_window_event(|window, event| {
+            let app = window.app_handle();
+            let state = app.state::<AppState>();
+            match event {
+                // The user closed this window: forget its document (the session must not reopen it).
+                tauri::WindowEvent::CloseRequested { .. } => {
+                    log::info!("{} closed", window.label());
+                    state.docs.lock().unwrap().remove(window.label());
+                    save_session(app);
+                }
+                tauri::WindowEvent::Destroyed => {
+                    state.docs.lock().unwrap().remove(window.label());
+                    state.watchers.lock().unwrap().remove(window.label());
+                    state.pending.lock().unwrap().remove(window.label());
+                }
+                _ => {}
+            }
+        })
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -186,13 +428,27 @@ pub fn run() {
                         .build(),
                 )?;
             }
-            build_menu(app.handle())?;
-            // `Markdown Viewer.app/Contents/MacOS/markdown-viewer file.md`, or a file argument on Windows/Linux.
-            if let Some(arg) = std::env::args().nth(1) {
-                let p = PathBuf::from(&arg);
-                if p.is_file() {
-                    let abs = p.canonicalize().unwrap_or(p);
-                    *app.state::<AppState>().pending.lock().unwrap() = Some(abs.to_string_lossy().into_owned());
+            let handle = app.handle().clone();
+            {
+                let state = app.state::<AppState>();
+                *state.recent.lock().unwrap() = read_json::<Vec<String>>(&handle, "recent.json");
+                state.tabs.store(read_json::<Settings>(&handle, "settings.json").tabs, Ordering::Relaxed);
+            }
+            build_menu(&handle)?;
+            handle.on_menu_event(|app, ev| on_menu(app, &ev.id().0));
+
+            // Files named on the command line; otherwise the documents open when the app last quit.
+            let args: Vec<PathBuf> = std::env::args().skip(1).map(PathBuf::from).filter(|p| p.is_file()).collect();
+            let paths = if args.is_empty() {
+                read_json::<Vec<String>>(&handle, "session.json").into_iter().map(PathBuf::from).filter(|p| p.is_file()).collect()
+            } else {
+                args
+            };
+            if paths.is_empty() {
+                new_window(&handle, None);
+            } else {
+                for p in paths {
+                    open_document(&handle, p);
                 }
             }
             Ok(())
@@ -200,15 +456,34 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(|app, event| {
+    app.run(|app, event| match event {
         // Finder double-click, drag onto the Dock icon, `open -a` on macOS.
         #[cfg(any(target_os = "macos", target_os = "ios"))]
-        if let tauri::RunEvent::Opened { urls } = event {
-            if let Some(path) = urls.iter().filter_map(|u| u.to_file_path().ok()).next() {
-                open_in_frontend(app, path.to_string_lossy().into_owned());
+        tauri::RunEvent::Opened { urls } => {
+            for path in urls.iter().filter_map(|u| u.to_file_path().ok()) {
+                open_document(app, path);
             }
         }
-        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-        let _ = (app, event);
+        // Dock icon clicked with no windows left.
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::Reopen { has_visible_windows, .. } => {
+            if !has_visible_windows {
+                new_window(app, None);
+            }
+        }
+        tauri::RunEvent::ExitRequested { code, api, .. } => {
+            if code.is_none() {
+                // Last window closed: stay running like other Mac document apps; Dock click reopens.
+                #[cfg(target_os = "macos")]
+                api.prevent_exit();
+                #[cfg(not(target_os = "macos"))]
+                let _ = api;
+            } else {
+                // Quitting: the open documents come back next launch.
+                save_session(app);
+                app.state::<AppState>().quitting.store(true, Ordering::Relaxed);
+            }
+        }
+        _ => {}
     });
 }
