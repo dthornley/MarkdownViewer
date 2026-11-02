@@ -299,7 +299,8 @@ window.dispatchEvent(new Event('mermaid-ready'));
     const blocks = [...out.querySelectorAll('pre.mermaid-src')];
     if (blocks.length && window.mermaid) {
       const renderId = ++mermaidGen;
-      for (const [i, pre] of blocks.entries()) {
+      // Render all diagrams concurrently; each settles to a div (svg or error box)
+      const divs = await Promise.all(blocks.map(async (pre, i) => {
         const code = pre.textContent;
         const div = document.createElement('div'); div.className = 'mermaid';
         try {
@@ -309,9 +310,10 @@ window.dispatchEvent(new Event('mermaid-ready'));
           div.innerHTML = `<div class="mermaid-error">Mermaid error: ${md.utils.escapeHtml(String(e.message || e))}</div><pre><code>${md.utils.escapeHtml(code)}</code></pre>`;
           document.querySelectorAll('body > svg[id^="dmmd"], body > div[id^="dmmd"]').forEach(n => n.remove());
         }
-        if (renderId !== mermaidGen) return; // a newer render superseded this one
-        pre.replaceWith(div);
-      }
+        return div;
+      }));
+      if (renderId !== mermaidGen) return; // a newer render superseded this one
+      blocks.forEach((pre, i) => pre.replaceWith(divs[i]));
     }
 
     if (location.hash) { const el = document.getElementById(decodeURIComponent(location.hash.slice(1))); el?.scrollIntoView(); }
