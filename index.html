@@ -4,9 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Markdown Viewer</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
-<link rel="stylesheet" id="hljs-light" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/styles/github.min.css">
-<link rel="stylesheet" id="hljs-dark" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/styles/github-dark.min.css" disabled>
+<script>window.__mdvFailed = []; function __mdvFail(el) { __mdvFailed.push(el.src || el.href); dispatchEvent(new Event('mdv-lib-failed')); }</script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" onerror="__mdvFail(this)">
+<link rel="stylesheet" id="hljs-light" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/styles/github.min.css" onerror="__mdvFail(this)">
+<link rel="stylesheet" id="hljs-dark" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/styles/github-dark.min.css" disabled onerror="__mdvFail(this)">
 <style>
   :root {
     --bg: #ffffff; --fg: #1f2328; --muted: #656d76; --border: #d0d7de;
@@ -111,6 +112,8 @@
   .md .alert-warning { border-color: #9a6700; } .md .alert-warning > p:first-child { color: #9a6700; }
   .md .alert-caution { border-color: #cf222e; } .md .alert-caution > p:first-child { color: #cf222e; }
   #error { color: #cf222e; background: var(--code-bg); padding: 12px 16px; margin: 16px; border-radius: 6px; display: none; white-space: pre-wrap; }
+  #notice { color: #9a6700; background: var(--code-bg); border-left: .25em solid #9a6700; padding: 8px 16px; margin: 16px; border-radius: 6px; display: none; font-size: 13px; }
+  #notice button { float: right; font-size: 11px; padding: 1px 7px; margin-left: 12px; }
   @media (max-width: 800px) { #toc { display: none; } article { padding: 20px; } }
   @media print {
     #toolbar, #toc { display: none !important; }
@@ -133,6 +136,7 @@
   <nav id="toc" class="hidden"></nav>
   <div id="content">
     <div id="error"></div>
+    <div id="notice"></div>
     <article>
       <div id="drop">
         <h2>Drop a Markdown file here</h2>
@@ -144,23 +148,26 @@
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/markdown-it-footnote@4.0.0/dist/markdown-it-footnote.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/markdown-it-task-lists@2.1.1/dist/markdown-it-task-lists.min.js"></script>
-<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/highlight.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js" onerror="__mdvFail(this)"></script>
+<script src="https://cdn.jsdelivr.net/npm/markdown-it-footnote@4.0.0/dist/markdown-it-footnote.min.js" onerror="__mdvFail(this)"></script>
+<script src="https://cdn.jsdelivr.net/npm/markdown-it-task-lists@2.1.1/dist/markdown-it-task-lists.min.js" onerror="__mdvFail(this)"></script>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/highlight.min.js" onerror="__mdvFail(this)"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" onerror="__mdvFail(this)"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onerror="__mdvFail(this)"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js" onerror="__mdvFail(this)"></script>
 <script type="module">
-import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs';
-window.mermaid = mermaid;
-window.dispatchEvent(new Event('mermaid-ready'));
+const url = 'https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs';
+try {
+  window.mermaid = (await import(url)).default;
+  window.dispatchEvent(new Event('mermaid-ready'));
+} catch { __mdvFail({ src: url }); }
 </script>
 <script>
 (() => {
   const $ = (s) => document.querySelector(s);
   const out = $('#out'), toc = $('#toc'), drop = $('#drop'), titleEl = $('#title'), errEl = $('#error');
-  const state = { fileName: null, handle: null, baseUrl: null, source: '' };
+  // fileParam: path (relative to the mdview server root) of the file currently shown in served mode, or null.
+  const state = { fileName: null, handle: null, baseUrl: null, source: '', fileParam: null };
   let mermaidGen = 0;
 
   // ---------- Theme ----------
@@ -170,29 +177,52 @@ window.dispatchEvent(new Event('mermaid-ready'));
     theme = t; document.documentElement.dataset.theme = t; localStorage.setItem('mdv-theme', t);
     $('#hljs-light').disabled = t === 'dark'; $('#hljs-dark').disabled = t !== 'dark';
     $('#btn-theme').textContent = t === 'dark' ? 'Light' : 'Dark';
-    if (window.mermaid) { initMermaid(); if (state.source) render(state.source); }
+    if (window.mermaid) { initMermaid(); if (state.source) render(state.source, true); }
   }
   function initMermaid() {
     window.mermaid.initialize({ startOnLoad: false, theme: theme === 'dark' ? 'dark' : 'default', securityLevel: 'strict' });
   }
   applyTheme(theme);
-  addEventListener('mermaid-ready', () => { initMermaid(); if (state.source) render(state.source); });
+  addEventListener('mermaid-ready', () => { initMermaid(); if (state.source) render(state.source, true); });
+
+  // ---------- CDN failure handling ----------
+  // Required: markdown-it. Everything else degrades gracefully (see showNotice).
+  if (!window.markdownit) {
+    showError('Markdown Viewer needs an internet connection the first time it loads (its rendering libraries come from jsDelivr).\n' +
+      'Failed to load:\n' + (window.__mdvFailed.length ? window.__mdvFailed.join('\n') : '(unknown)'));
+    return;
+  }
+  const FEATURES = [['markdown-it-footnote', 'footnotes'], ['markdown-it-task-lists', 'task lists'], ['highlightjs', 'syntax highlighting'],
+    ['katex', 'math'], ['dompurify', 'inline HTML (sanitizer unavailable, so it is disabled)'], ['mermaid', 'Mermaid diagrams']];
+  function showNotice() {
+    const missing = [...new Set(FEATURES.filter(([k]) => window.__mdvFailed.some(u => u.includes(k))).map(([, name]) => name))];
+    const el = $('#notice');
+    if (!missing.length || el.dataset.dismissed) return;
+    el.textContent = `Offline: ${missing.join(', ')} unavailable until the page is reloaded with an internet connection.`;
+    el.title = 'Failed to load:\n' + window.__mdvFailed.join('\n');
+    const btn = document.createElement('button'); btn.textContent = 'Dismiss';
+    btn.onclick = () => { el.style.display = 'none'; el.dataset.dismissed = '1'; };
+    el.prepend(btn); el.style.display = 'block';
+  }
+  showNotice(); addEventListener('mdv-lib-failed', showNotice); addEventListener('load', showNotice);
 
   // ---------- Markdown engine ----------
   const md = window.markdownit({
-    html: true, linkify: true, typographer: true,
+    html: !!window.DOMPurify, linkify: true, typographer: true,
     highlight(str, lang) {
       if (lang === 'mermaid') return `<pre class="mermaid-src">${md.utils.escapeHtml(str)}</pre>`;
       let body;
-      if (lang && hljs.getLanguage(lang)) {
-        try { body = hljs.highlight(str, { language: lang, ignoreIllegals: true }).value; } catch {}
+      const hl = window.hljs;
+      if (lang && hl?.getLanguage(lang)) {
+        try { body = hl.highlight(str, { language: lang, ignoreIllegals: true }).value; } catch {}
       }
-      if (body === undefined) body = lang ? md.utils.escapeHtml(str) : hljs.highlightAuto(str).value;
+      if (body === undefined) body = lang || !hl ? md.utils.escapeHtml(str) : hl.highlightAuto(str).value;
       const label = lang ? `<span class="lang">${md.utils.escapeHtml(lang)}</span>` : '';
       return `<pre class="hljs">${label}<button class="copy">Copy</button><code class="language-${md.utils.escapeHtml(lang || 'text')}">${body}</code></pre>`;
     },
   });
-  md.use(window.markdownitFootnote).use(window.markdownitTaskLists, { label: true });
+  if (window.markdownitFootnote) md.use(window.markdownitFootnote);
+  if (window.markdownitTaskLists) md.use(window.markdownitTaskLists, { label: true });
 
   // Heading ids + anchors
   const slugify = (s) => s.toLowerCase().trim().replace(/[^\wÀ-￿\- ]+/g, '').replace(/\s+/g, '-');
@@ -253,16 +283,20 @@ window.dispatchEvent(new Event('mermaid-ready'));
     if (/^[a-z]+:|^\/\//i.test(href)) { t.attrSet('target', '_blank'); t.attrSet('rel', 'noopener noreferrer'); }
     else if (state.baseUrl && !href.startsWith('#')) {
       const u = new URL(href, state.baseUrl);
-      if (/\.(md|markdown|mdown|mkd)$/i.test(u.pathname) && location.search.includes('file=')) {
-        t.attrSet('href', `${location.pathname}?file=${encodeURIComponent(u.pathname.replace(/^\/+/, ''))}${u.hash}`);
+      if (/\.(md|markdown|mdown|mkd)$/i.test(u.pathname) && state.fileParam) {
+        // Served mode: point at the viewer so middle-click / open-in-new-tab also stay in the viewer.
+        // Left-clicks are intercepted below and loaded in place.
+        t.attrSet('href', `${location.pathname}?file=${encodeURIComponent(decodeURIComponent(u.pathname).replace(/^\/+/, ''))}${u.hash}`);
       } else t.attrSet('href', u.href);
     }
     return defaultLinkOpen(tokens, idx, opts, env, self);
   };
 
   // ---------- Render ----------
-  async function render(src) {
+  // keep: re-render of the same document (reload, theme change) – preserve the scroll offset instead of honouring the hash.
+  async function render(src, keep) {
     state.source = src; errEl.style.display = 'none';
+    const content = $('#content'), scrollTop = content.scrollTop;
     // Strip YAML front matter and show it as a table
     let fm = null;
     const fmMatch = /^---\s*\n([\s\S]*?)\n---\s*\n/.exec(src);
@@ -270,7 +304,8 @@ window.dispatchEvent(new Event('mermaid-ready'));
 
     let html;
     try { html = md.render(src); } catch (e) { showError('Render error: ' + e.message); return; }
-    html = DOMPurify.sanitize(html, { ADD_TAGS: ['details', 'summary', 'kbd', 'mark', 'sub', 'sup'], ADD_ATTR: ['target', 'open', 'align'] });
+    // Without DOMPurify, md was created with html: false so no raw HTML reaches the page.
+    if (window.DOMPurify) html = DOMPurify.sanitize(html, { ADD_TAGS: ['details', 'summary', 'kbd', 'mark', 'sub', 'sup'], ADD_ATTR: ['target', 'open', 'align'] });
     out.innerHTML = (fm ? `<details class="front-matter"><summary>Front matter</summary><pre><code>${md.utils.escapeHtml(fm)}</code></pre></details>` : '') + html;
     drop.style.display = 'none';
 
@@ -294,12 +329,14 @@ window.dispatchEvent(new Event('mermaid-ready'));
     }));
 
     buildToc();
+    if (keep) content.scrollTop = scrollTop;
 
     // Mermaid
     const blocks = [...out.querySelectorAll('pre.mermaid-src')];
     if (blocks.length && window.mermaid) {
       const renderId = ++mermaidGen;
-      for (const [i, pre] of blocks.entries()) {
+      // Render all diagrams concurrently; each settles to a div (svg or error box)
+      const divs = await Promise.all(blocks.map(async (pre, i) => {
         const code = pre.textContent;
         const div = document.createElement('div'); div.className = 'mermaid';
         try {
@@ -309,12 +346,14 @@ window.dispatchEvent(new Event('mermaid-ready'));
           div.innerHTML = `<div class="mermaid-error">Mermaid error: ${md.utils.escapeHtml(String(e.message || e))}</div><pre><code>${md.utils.escapeHtml(code)}</code></pre>`;
           document.querySelectorAll('body > svg[id^="dmmd"], body > div[id^="dmmd"]').forEach(n => n.remove());
         }
-        if (renderId !== mermaidGen) return; // a newer render superseded this one
-        pre.replaceWith(div);
-      }
+        return div;
+      }));
+      if (renderId !== mermaidGen) return; // a newer render superseded this one
+      blocks.forEach((pre, i) => pre.replaceWith(divs[i]));
     }
 
-    if (location.hash) { const el = document.getElementById(decodeURIComponent(location.hash.slice(1))); el?.scrollIntoView(); }
+    if (keep) content.scrollTop = scrollTop; // diagrams change the layout height, so restore again
+    else if (location.hash) { const el = document.getElementById(decodeURIComponent(location.hash.slice(1))); el?.scrollIntoView(); }
   }
 
   function showError(msg) { errEl.textContent = msg; errEl.style.display = 'block'; }
@@ -345,18 +384,18 @@ window.dispatchEvent(new Event('mermaid-ready'));
     titleEl.append(name || 'Markdown Viewer');
     document.title = name ? `${name} – Markdown Viewer` : 'Markdown Viewer';
   }
-  async function loadFile(file, handle) {
+  async function loadFile(file, handle, keep) {
     state.handle = handle || null; state.baseUrl = null;
     setTitle(file.name);
-    render(await file.text());
+    render(await file.text(), keep);
   }
-  async function loadUrl(url) {
+  async function loadUrl(url, keep) {
     try {
       const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       state.baseUrl = new URL(url, location.href).href;
       setTitle(decodeURIComponent(url.split('/').pop().split('?')[0]));
-      render(await res.text());
+      render(await res.text(), keep);
     } catch (e) { showError(`Could not load ${url}: ${e.message}`); }
   }
 
@@ -393,9 +432,9 @@ window.dispatchEvent(new Event('mermaid-ready'));
 
   // Toolbar
   async function reload() {
-    if (state.handle) loadFile(await state.handle.getFile(), state.handle);
-    else if (state.baseUrl) loadUrl(state.baseUrl);
-    else if (state.source) render(state.source);
+    if (state.handle) loadFile(await state.handle.getFile(), state.handle, true);
+    else if (state.baseUrl) loadUrl(state.baseUrl, true);
+    else if (state.source) render(state.source, true);
   }
   $('#btn-reload').addEventListener('click', reload);
   $('#btn-toc').addEventListener('click', () => {
@@ -409,21 +448,72 @@ window.dispatchEvent(new Event('mermaid-ready'));
     else if (e.key === 'd') $('#btn-theme').click(); else if (e.key === 'p') { e.preventDefault(); print(); }
   });
 
-  // Auto-refresh when served by mdview (polls mtime)
+  // ---------- Served mode (mdview): in-viewer navigation between .md files ----------
+  const MD_EXT = /\.(md|markdown|mdown|mkd)$/i;
+  let lastMtime = null; // mtime of state.fileParam as last seen by the poll below
+  let es = null;
+  // (Re)subscribe to change events for the file currently shown; called again after in-viewer navigation.
+  function watchServedFile() {
+    if (!window.EventSource || !state.fileParam) return;
+    es?.close();
+    es = new EventSource(`/__events?file=${encodeURIComponent(state.fileParam)}`);
+    let opened = false;
+    es.addEventListener('open', () => { if (opened) loadUrl(state.fileParam, true); opened = true; }); // reconnect after server restart
+    es.addEventListener('message', (e) => { try { if (JSON.parse(e.data).type === 'change') loadUrl(state.fileParam, true); } catch {} });
+  }
+  // Show another file from the served root in place. `rel` is relative to the server root.
+  function openServedFile(rel, hash = '', push = true) {
+    state.fileParam = rel; lastMtime = null; watchServedFile();
+    if (push) history.pushState({ file: rel }, '', `${location.pathname}?file=${encodeURIComponent(rel)}${hash}`);
+    if (!hash) $('#content').scrollTop = 0;
+    loadUrl(rel);
+  }
+  // Intercept left-clicks on relative .md links so they open in the viewer instead of as raw text.
+  out.addEventListener('click', (e) => {
+    const a = e.target.closest('a[href]');
+    if (!a || !out.contains(a) || !state.fileParam) return;
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || a.target === '_blank') return;
+    const raw = a.getAttribute('href');
+    if (!raw || /^(https?:|mailto:|[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(raw)) return;
+    let u;
+    try { u = new URL(raw, new URL(state.fileParam, location.href)); } catch { return; }
+    if (u.origin !== location.origin) return;
+    let rel;
+    if (u.pathname === location.pathname && u.searchParams.has('file')) rel = u.searchParams.get('file'); // already rewritten by link_open
+    else if (MD_EXT.test(u.pathname)) { try { rel = decodeURIComponent(u.pathname).replace(/^\/+/, ''); } catch { return; } }
+    else return;
+    // Leave anything that is not a plain path inside the served root to the browser.
+    if (!rel || !MD_EXT.test(rel) || rel.split('/').some(seg => seg === '..' || seg === '')) return;
+    e.preventDefault();
+    if (rel === state.fileParam) { if (u.hash) location.hash = u.hash; else openServedFile(rel, '', false); return; }
+    openServedFile(rel, u.hash, true);
+  });
+  // Back/forward: load whatever file the URL now names.
+  addEventListener('popstate', () => {
+    if (!state.fileParam) return;
+    const rel = new URLSearchParams(location.search).get('file');
+    if (rel && rel !== state.fileParam) openServedFile(rel, location.hash, false);
+  });
+
+  // Auto-refresh when served by mdview (server-sent events, falling back to mtime polling)
   const params = new URLSearchParams(location.search);
   const fileParam = params.get('file');
   if (fileParam) {
+    state.fileParam = fileParam;
     loadUrl(fileParam);
-    let lastMtime = null;
-    setInterval(async () => {
-      try {
-        const r = await fetch(`/__mtime?file=${encodeURIComponent(fileParam)}`, { cache: 'no-store' });
-        if (!r.ok) return;
-        const { mtime } = await r.json();
-        if (lastMtime !== null && mtime !== lastMtime) loadUrl(fileParam);
-        lastMtime = mtime;
-      } catch {}
-    }, 1000);
+    if (window.EventSource) {
+      watchServedFile();
+    } else {
+      setInterval(async () => {
+        try {
+          const r = await fetch(`/__mtime?file=${encodeURIComponent(state.fileParam)}`, { cache: 'no-store' });
+          if (!r.ok) return;
+          const { mtime } = await r.json();
+          if (lastMtime !== null && mtime !== lastMtime) loadUrl(state.fileParam, true);
+          lastMtime = mtime;
+        } catch {}
+      }, 1000);
+    }
   }
   addEventListener('hashchange', () => { const el = document.getElementById(decodeURIComponent(location.hash.slice(1))); el?.scrollIntoView(); });
 })();
