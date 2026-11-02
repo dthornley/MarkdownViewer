@@ -47,3 +47,5 @@ Open `index.html` directly in a browser and drop a `.md` file onto it, use **Ope
 ## Notes
 
 Rendering libraries (markdown-it, highlight.js, Mermaid, KaTeX, DOMPurify) load from jsDelivr, so an internet connection is needed the first time. Rendered HTML is sanitized with DOMPurify.
+
+If the libraries cannot be loaded (offline, CDN blocked), the page shows a clear error listing the failed URLs instead of staying blank. Only markdown-it is required: when optional libraries are missing the viewer still renders, with a dismissable warning naming the unavailable features (syntax highlighting, math, Mermaid diagrams, footnotes, task lists), and inline HTML is disabled when DOMPurify is absent.
