@@ -2,7 +2,18 @@
   "name": "markdown-viewer",
   "version": "1.0.0",
   "description": "A simple, friendly Markdown viewer with GFM, Mermaid, math and syntax highlighting",
-  "bin": { "mdview": "bin/mdview.js" },
-  "scripts": { "start": "node bin/mdview.js sample.md" },
-  "license": "MIT"
+  "bin": {
+    "mdview": "bin/mdview.js"
+  },
+  "scripts": {
+    "start": "node bin/mdview.js sample.md",
+    "app:dev": "tauri dev",
+    "dist": "./scripts/dist.sh",
+    "dist:unsigned": "./scripts/dist.sh --unsigned",
+    "tauri": "tauri"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4"
+  }
 }

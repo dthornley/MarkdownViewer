@@ -21,12 +21,13 @@ const filePath = path.resolve(target);
 if (!fs.existsSync(filePath)) { console.error(`mdview: no such file: ${filePath}`); process.exit(1); }
 const root = path.dirname(filePath);
 const viewerHtml = path.join(__dirname, '..', 'index.html');
+const vendorDir = path.join(__dirname, '..', 'vendor'); // bundled rendering libraries (served at /vendor/)
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.md': 'text/markdown; charset=utf-8', '.markdown': 'text/markdown; charset=utf-8',
   '.txt': 'text/plain; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
   '.svg': 'image/svg+xml', '.webp': 'image/webp', '.css': 'text/css', '.js': 'text/javascript', '.json': 'application/json',
-  '.pdf': 'application/pdf',
+  '.pdf': 'application/pdf', '.woff2': 'font/woff2', '.mjs': 'text/javascript',
 };
 
 function safeJoin(base, rel) {
@@ -48,9 +49,16 @@ function onFsEvent(event, name) {
 }
 try { fs.watch(root, { recursive: true }, onFsEvent); } catch { fs.watch(root, onFsEvent); }
 
+// Only answer requests addressed to this machine. A web page you visit elsewhere could
+// otherwise point a hostname it controls at 127.0.0.1 (DNS rebinding) and read the served folder.
+const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
+
 const server = http.createServer((req, res) => {
-  const url = new URL(req.url, 'http://localhost');
-  const pathname = decodeURIComponent(url.pathname);
+  const host = (req.headers.host || '').replace(/:\d+$/, '').toLowerCase();
+  if (!LOCAL_HOSTS.has(host)) { res.writeHead(403); return res.end('Forbidden'); }
+  let url, pathname;
+  try { url = new URL(req.url, 'http://localhost'); pathname = decodeURIComponent(url.pathname); }
+  catch { res.writeHead(400); return res.end('Bad request'); }
 
   if (pathname === '/' || pathname === '/index.html') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -76,7 +84,9 @@ const server = http.createServer((req, res) => {
     res.on('close', () => { clearInterval(ping); watchers.get(rel)?.delete(onChange); });
     return;
   }
-  const p = safeJoin(root, pathname);
+  // Bundled libraries win over a document-folder file of the same name; anything else comes from the document's folder.
+  const vendored = pathname.startsWith('/vendor/') ? safeJoin(vendorDir, pathname.slice('/vendor/'.length)) : null;
+  const p = vendored && fs.existsSync(vendored) ? vendored : safeJoin(root, pathname);
   if (!p || !fs.existsSync(p) || fs.statSync(p).isDirectory()) { res.writeHead(404); return res.end('Not found'); }
   res.writeHead(200, { 'Content-Type': MIME[path.extname(p).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-store' });
   fs.createReadStream(p).pipe(res);
