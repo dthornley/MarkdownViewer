@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Markdown Viewer</title>
-<script>window.__mdvFailed = []; function __mdvFail(el) { __mdvFailed.push(el.src || el.href); dispatchEvent(new Event('mdv-lib-failed')); }</script>
-<link rel="stylesheet" href="vendor/katex/katex.min.css" onerror="__mdvFail(this)">
-<link rel="stylesheet" id="hljs-light" href="vendor/hljs/github.min.css" onerror="__mdvFail(this)">
-<link rel="stylesheet" id="hljs-dark" href="vendor/hljs/github-dark.min.css" disabled onerror="__mdvFail(this)">
+<script>window.__mdvFailed = []; addEventListener('error', (e) => { const el = e.target; if (el && el !== window && (el.src || el.href)) { __mdvFailed.push(el.src || el.href); dispatchEvent(new Event('mdv-lib-failed')); } }, true);</script>
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<link rel="stylesheet" id="hljs-light" href="vendor/hljs/github.min.css">
+<link rel="stylesheet" id="hljs-dark" href="vendor/hljs/github-dark.min.css" disabled>
 <style>
   :root {
     --bg: #ffffff; --fg: #1f2328; --muted: #656d76; --border: #d0d7de;
@@ -148,14 +148,14 @@
   </div>
 </div>
 
-<script src="vendor/markdown-it.min.js" onerror="__mdvFail(this)"></script>
-<script src="vendor/markdown-it-footnote.min.js" onerror="__mdvFail(this)"></script>
-<script src="vendor/markdown-it-task-lists.min.js" onerror="__mdvFail(this)"></script>
-<script src="vendor/hljs/highlight.min.js" onerror="__mdvFail(this)"></script>
-<script src="vendor/katex/katex.min.js" onerror="__mdvFail(this)"></script>
-<script src="vendor/katex/auto-render.min.js" onerror="__mdvFail(this)"></script>
-<script src="vendor/purify.min.js" onerror="__mdvFail(this)"></script>
-<script src="vendor/mermaid.min.js" onerror="__mdvFail(this)"></script>
+<script src="vendor/markdown-it.min.js"></script>
+<script src="vendor/markdown-it-footnote.min.js"></script>
+<script src="vendor/markdown-it-task-lists.min.js"></script>
+<script src="vendor/hljs/highlight.min.js"></script>
+<script src="vendor/katex/katex.min.js"></script>
+<script src="vendor/katex/auto-render.min.js"></script>
+<script src="vendor/purify.min.js"></script>
+<script src="vendor/mermaid.min.js"></script>
 <script>if (window.mermaid) dispatchEvent(new Event('mermaid-ready'));</script>
 <script>
 (() => {
@@ -300,7 +300,11 @@
     let html;
     try { html = md.render(src); } catch (e) { showError('Render error: ' + e.message); return; }
     // Without DOMPurify, md was created with html: false so no raw HTML reaches the page.
-    if (window.DOMPurify) html = DOMPurify.sanitize(html, { ADD_TAGS: ['details', 'summary', 'kbd', 'mark', 'sub', 'sup'], ADD_ATTR: ['target', 'open', 'align'] });
+    if (window.DOMPurify) html = DOMPurify.sanitize(html, {
+      ADD_TAGS: ['details', 'summary', 'kbd', 'mark', 'sub', 'sup'], ADD_ATTR: ['target', 'open', 'align'],
+      // In the desktop app documents and their images come from the mdv:// protocol, which DOMPurify would otherwise strip.
+      ...(window.__TAURI__ && { ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|matrix|mdv):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i }),
+    });
     out.innerHTML = (fm ? `<details class="front-matter"><summary>Front matter</summary><pre><code>${md.utils.escapeHtml(fm)}</code></pre></details>` : '') + html;
     drop.style.display = 'none';
 
@@ -349,6 +353,7 @@
 
     if (keep) content.scrollTop = scrollTop; // diagrams change the layout height, so restore again
     else if (location.hash) { const el = document.getElementById(decodeURIComponent(location.hash.slice(1))); el?.scrollIntoView(); }
+    document.dispatchEvent(new CustomEvent('mdv-rendered'));
   }
 
   function showError(msg) { errEl.textContent = msg; errEl.style.display = 'block'; }
@@ -378,6 +383,7 @@
     state.fileName = name; titleEl.innerHTML = '';
     titleEl.append(name || 'Markdown Viewer');
     document.title = name ? `${name} – Markdown Viewer` : 'Markdown Viewer';
+    window.__TAURI__?.window.getCurrentWindow().setTitle(name || 'Markdown Viewer');
   }
   async function loadFile(file, handle, keep) {
     state.handle = handle || null; state.baseUrl = null;
@@ -489,6 +495,52 @@
     const rel = new URLSearchParams(location.search).get('file');
     if (rel && rel !== state.fileParam) openServedFile(rel, location.hash, false);
   });
+
+  // ---------- Desktop app (Tauri shell) ----------
+  // Documents are fetched through the app's mdv:// protocol, so loadUrl and the relative-URL
+  // resolution above work unchanged; only opening, watching and link clicks differ.
+  const tauri = window.__TAURI__;
+  if (tauri) {
+    const { invoke } = tauri.core, { listen } = tauri.event;
+    const isWin = navigator.platform.startsWith('Win');
+    const MDV = isWin ? 'http://mdv.localhost/' : 'mdv://localhost';
+    const toUrl = (abs) => MDV + abs.replace(/\\/g, '/').split('/').map(encodeURIComponent).join('/');
+    const fromUrl = (u) => { const p = decodeURIComponent(new URL(u).pathname); return isWin ? p.replace(/^\//, '') : p; };
+    let lastOpen = { path: null, at: 0 }, changeTimer = null;
+    async function openPath(abs) {
+      if (abs === lastOpen.path && Date.now() - lastOpen.at < 1000) return; // launch can deliver the same file twice
+      lastOpen = { path: abs, at: Date.now() };
+      state.handle = null;
+      await loadUrl(toUrl(abs));
+      invoke('watch_file', { path: abs }).catch(e => showError(String(e)));
+    }
+    const pick = async () => { const p = await invoke('pick_file'); if (p) { location.hash = ''; openPath(p); } };
+    // Native dialog instead of <input type=file>, so we get a path to watch and resolve against.
+    $('label.btn').addEventListener('click', (e) => { e.preventDefault(); e.stopImmediatePropagation(); pick(); }, true);
+    // Relative .md links open in the app; external links go to the default browser.
+    out.addEventListener('click', (e) => {
+      const a = e.target.closest('a[href]');
+      if (!a || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const href = a.href;
+      if (href.startsWith(MDV) && MD_EXT.test(new URL(href).pathname)) {
+        e.preventDefault(); location.hash = new URL(href).hash; openPath(fromUrl(href));
+      } else if (/^(https?:|mailto:)/i.test(href)) { e.preventDefault(); tauri.opener.openUrl(href); }
+    });
+    // Files: Finder / Dock / command line, drag and drop, change notifications, menu.
+    listen('open-file', (e) => { location.hash = ''; openPath(e.payload); });
+    listen('tauri://drag-enter', () => document.body.classList.add('dragging'));
+    listen('tauri://drag-leave', () => document.body.classList.remove('dragging'));
+    listen('tauri://drag-drop', (e) => { document.body.classList.remove('dragging'); const p = e.payload.paths?.[0]; if (p) { location.hash = ''; openPath(p); } });
+    listen('file-changed', () => { clearTimeout(changeTimer); changeTimer = setTimeout(() => { if (state.baseUrl) loadUrl(state.baseUrl, true); }, 100); });
+    listen('menu', (e) => {
+      const id = e.payload;
+      if (id === 'open') pick(); else if (id === 'reload') reload(); else if (id === 'print') print();
+      else if (id === 'toc') $('#btn-toc').click(); else if (id === 'theme') $('#btn-theme').click();
+    });
+    invoke('take_pending_file').then(p => { if (p) openPath(p); });
+    // Debug builds attach the log plugin; one line per render makes `npm run app:dev` easy to follow.
+    document.addEventListener('mdv-rendered', () => tauri.log?.info(`rendered ${state.baseUrl || state.fileName || 'pasted'}: ${out.querySelectorAll('h1,h2,h3').length} headings, ${out.querySelectorAll('.mermaid svg').length} diagrams, ${out.querySelectorAll('.katex').length} math, ${out.querySelectorAll('img').length} images, failed libs: ${window.__mdvFailed.length}`));
+  }
 
   // Auto-refresh when served by mdview (server-sent events, falling back to mtime polling)
   const params = new URLSearchParams(location.search);
