@@ -55,7 +55,7 @@
   #toc .l2 { padding-left: 18px; } #toc .l3 { padding-left: 30px; }
   #toc .l4 { padding-left: 42px; } #toc .l5, #toc .l6 { padding-left: 54px; }
   #content { flex: 1; min-width: 0; overflow: auto; }
-  article { max-width: 900px; margin: 0 auto; padding: 32px 40px 80px; }
+  article { max-width: 900px; margin: 0 auto; padding: 32px 40px 80px; zoom: var(--zoom, 1); }
   /* Drop zone */
   #drop {
     margin: 60px auto; max-width: 560px; padding: 60px 30px; text-align: center;
@@ -96,7 +96,8 @@
   .md kbd { display: inline-block; padding: 2px 5px; font: 11px ui-monospace, monospace; line-height: 10px; color: var(--fg);
             background: var(--code-bg); border: 1px solid var(--border); border-bottom-width: 3px; border-radius: 6px; }
   .md .mermaid { background: transparent; text-align: center; margin: 0 0 16px; overflow: auto; }
-  .md .mermaid svg { max-width: 100%; height: auto; }
+  .md .mermaid svg { max-width: 100%; height: auto; cursor: zoom-in; }
+  .md img { cursor: zoom-in; }
   .md .mermaid-error { color: #d1242f; background: var(--code-bg); padding: 12px; border-radius: 6px; font-size: 13px; white-space: pre-wrap; }
   .md .footnotes { font-size: 14px; color: var(--muted); border-top: 1px solid var(--border); margin-top: 32px; padding-top: 8px; }
   .md .footnote-backref { text-decoration: none; }
@@ -114,8 +115,17 @@
   #error { color: #cf222e; background: var(--code-bg); padding: 12px 16px; margin: 16px; border-radius: 6px; display: none; white-space: pre-wrap; }
   #notice { color: #9a6700; background: var(--code-bg); border-left: .25em solid #9a6700; padding: 8px 16px; margin: 16px; border-radius: 6px; display: none; font-size: 13px; }
   #notice button { float: right; font-size: 11px; padding: 1px 7px; margin-left: 12px; }
-  #update { color: var(--fg); background: var(--code-bg); border-left: .25em solid var(--link); padding: 8px 16px; margin: 16px; border-radius: 6px; display: none; font-size: 13px; }
+  #update { position: fixed; right: 16px; bottom: 16px; z-index: 20; color: var(--fg); background: var(--code-bg); border: 1px solid var(--border); border-left: .25em solid var(--link); padding: 8px 16px; border-radius: 6px; display: none; font-size: 13px; box-shadow: 0 4px 16px rgba(0,0,0,.2); }
   #update button { font-size: 12px; padding: 2px 9px; margin-left: 10px; }
+  #zoom { font-size: 12px; color: var(--muted); cursor: pointer; display: none; }
+  /* Full-window view of a diagram or image: scroll to zoom, drag to pan, Esc to close */
+  #lightbox { position: fixed; inset: 0; z-index: 30; background: var(--bg); display: none; overflow: hidden; cursor: grab; }
+  #lightbox.open { display: block; }
+  #lightbox.panning { cursor: grabbing; }
+  #lightbox .stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+  #lightbox .stage svg, #lightbox .stage img { display: block; max-width: none !important; }
+  #lightbox .bar { position: absolute; top: 12px; right: 12px; display: flex; gap: 6px; align-items: center; z-index: 1; }
+  #lightbox .bar span { font-size: 12px; color: var(--muted); margin-right: 6px; }
   @media (max-width: 800px) { #toc { display: none; } article { padding: 20px; } }
   @media print {
     #toolbar, #toc { display: none !important; }
@@ -133,7 +143,9 @@
   <button id="btn-toc" title="Toggle table of contents (T)">TOC</button>
   <button id="btn-theme" title="Toggle dark mode (D)">Dark</button>
   <button id="btn-print" title="Print / Save as PDF (P)">Print</button>
+  <span id="zoom" title="Reset zoom (⌘0)"></span>
 </div>
+<div id="lightbox"><div class="bar"><span></span><button data-z="out" title="Zoom out">−</button><button data-z="in" title="Zoom in">+</button><button data-z="fit" title="Fit to window">Fit</button><button data-z="close" title="Close (Esc)">Close</button></div><div class="stage"></div></div>
 <div id="main">
   <nav id="toc" class="hidden"></nav>
   <div id="content">
@@ -446,6 +458,68 @@
   });
   $('#btn-theme').addEventListener('click', () => applyTheme(theme === 'dark' ? 'light' : 'dark'));
   $('#btn-print').addEventListener('click', () => print());
+
+  // Page zoom (View menu in the app; the browser's own zoom covers served mode)
+  let zoom = Number(localStorage.getItem('mdv-zoom')) || 1;
+  function setZoom(z) {
+    zoom = Math.min(3, Math.max(0.5, Math.round(z * 100) / 100));
+    document.documentElement.style.setProperty('--zoom', zoom);
+    localStorage.setItem('mdv-zoom', zoom);
+    const el = $('#zoom'); el.textContent = `${Math.round(zoom * 100)}%`; el.style.display = zoom === 1 ? 'none' : 'inline';
+  }
+  $('#zoom').addEventListener('click', () => setZoom(1));
+  setZoom(zoom);
+
+  // Lightbox: click a diagram or image to view it full-window with pan and zoom.
+  const lightbox = $('#lightbox'), stage = lightbox.querySelector('.stage'), lbLabel = lightbox.querySelector('.bar span');
+  let lb = { scale: 1, x: 0, y: 0, w: 0, h: 0 };
+  function lbApply() {
+    stage.style.transform = `translate(${lb.x}px, ${lb.y}px) scale(${lb.scale})`;
+    lbLabel.textContent = `${Math.round(lb.scale * 100)}%`;
+  }
+  function lbFit() {
+    const vw = lightbox.clientWidth, vh = lightbox.clientHeight;
+    lb.scale = Math.min(4, (vw - 80) / lb.w, (vh - 80) / lb.h);
+    lb.x = (vw - lb.w * lb.scale) / 2; lb.y = (vh - lb.h * lb.scale) / 2; lbApply();
+  }
+  function lbZoom(factor, cx = lightbox.clientWidth / 2, cy = lightbox.clientHeight / 2) {
+    const s = Math.min(16, Math.max(0.1, lb.scale * factor));
+    // keep the point under the cursor fixed
+    lb.x = cx - (cx - lb.x) * (s / lb.scale); lb.y = cy - (cy - lb.y) * (s / lb.scale); lb.scale = s; lbApply();
+  }
+  function openLightbox(el) {
+    const node = el.cloneNode(true);
+    stage.replaceChildren(node);
+    if (node.tagName.toLowerCase() === 'svg') {
+      // Mermaid sizes its svg with max-width and a viewBox; render it at its natural size and scale from there.
+      const vb = node.viewBox?.baseVal, natural = parseFloat(node.style.maxWidth) || vb?.width || el.clientWidth;
+      lb.w = natural; lb.h = vb && vb.width ? natural * vb.height / vb.width : el.clientHeight * natural / el.clientWidth;
+      node.setAttribute('width', lb.w); node.setAttribute('height', lb.h); node.style.maxWidth = 'none'; node.removeAttribute('class');
+    } else { lb.w = el.naturalWidth || el.clientWidth; lb.h = el.naturalHeight || el.clientHeight; node.removeAttribute('width'); node.removeAttribute('height'); }
+    lightbox.classList.add('open'); lbFit();
+  }
+  const closeLightbox = () => { lightbox.classList.remove('open'); stage.replaceChildren(); };
+  out.addEventListener('click', (e) => {
+    if (e.target.closest('a[href]') || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const el = e.target.closest('.mermaid svg, img');
+    if (el) { e.preventDefault(); openLightbox(el); }
+  });
+  lightbox.querySelector('.bar').addEventListener('click', (e) => {
+    const z = e.target.dataset.z; if (!z) return;
+    if (z === 'in') lbZoom(1.25); else if (z === 'out') lbZoom(0.8); else if (z === 'fit') lbFit(); else closeLightbox();
+  });
+  lightbox.addEventListener('wheel', (e) => { e.preventDefault(); lbZoom(e.deltaY < 0 ? 1.1 : 1 / 1.1, e.clientX, e.clientY); }, { passive: false });
+  lightbox.addEventListener('dblclick', (e) => { if (!e.target.closest('.bar')) lbFit(); });
+  let pan = null;
+  lightbox.addEventListener('pointerdown', (e) => { if (e.target.closest('.bar') || e.button !== 0) return; pan = { x: e.clientX - lb.x, y: e.clientY - lb.y }; lightbox.classList.add('panning'); lightbox.setPointerCapture(e.pointerId); });
+  lightbox.addEventListener('pointermove', (e) => { if (!pan) return; lb.x = e.clientX - pan.x; lb.y = e.clientY - pan.y; lbApply(); });
+  lightbox.addEventListener('pointerup', () => { pan = null; lightbox.classList.remove('panning'); });
+  lightbox.addEventListener('pointercancel', () => { pan = null; lightbox.classList.remove('panning'); });
+  addEventListener('keydown', (e) => {
+    if (!lightbox.classList.contains('open')) return;
+    if (e.key === 'Escape') closeLightbox(); else if (e.key === '+' || e.key === '=') lbZoom(1.25); else if (e.key === '-') lbZoom(0.8); else if (e.key === '0') lbFit(); else return;
+    e.preventDefault(); e.stopImmediatePropagation();
+  }, true);
   addEventListener('keydown', (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey || e.target.matches('input, textarea')) return;
     if (e.key === 'r') reload(); else if (e.key === 't') $('#btn-toc').click();
@@ -540,40 +614,43 @@
       if (id === 'open') pick(); else if (id === 'reload') reload(); else if (id === 'print') print();
       else if (id === 'toc') $('#btn-toc').click(); else if (id === 'theme') $('#btn-theme').click();
       else if (id === 'update') checkForUpdates(true);
+      else if (id === 'zoom-in') setZoom(zoom + 0.1); else if (id === 'zoom-out') setZoom(zoom - 0.1); else if (id === 'zoom-reset') setZoom(1);
     });
     invoke('take_pending_file').then(p => { if (p) openPath(p); });
 
     // Updates: GitHub Releases publishes latest.json (see scripts/release.sh); the updater plugin
     // verifies the archive signature against the public key in tauri.conf.json before installing.
     const updateEl = $('#update');
-    function showUpdate(text, buttons) {
+    function showUpdate(text, buttons = []) {
       updateEl.textContent = text;
       for (const [label, fn] of buttons) { const b = document.createElement('button'); b.textContent = label; b.onclick = fn; updateEl.append(b); }
       updateEl.style.display = 'block';
     }
     const hideUpdate = () => { updateEl.style.display = 'none'; };
     async function checkForUpdates(manual) {
-      try {
-        const update = await tauri.updater.check();
-        if (!update) { if (manual) showUpdate('Markdown Viewer is up to date.', [['OK', hideUpdate]]); return; }
-        showUpdate(`Markdown Viewer ${update.version} is available (you have ${update.currentVersion}).`, [
-          ['Install and relaunch', async () => {
-            try {
-              let total = 0, got = 0;
-              await update.downloadAndInstall((ev) => {
-                if (ev.event === 'Started') total = ev.data.contentLength || 0;
-                else if (ev.event === 'Progress') { got += ev.data.chunkLength; showUpdate(total ? `Downloading update… ${Math.round(got / total * 100)}%` : 'Downloading update…', []); }
-                else if (ev.event === 'Finished') showUpdate('Installing…', []);
-              });
-              await tauri.process.relaunch();
-            } catch (e) { showUpdate(`Update failed: ${e}`, [['Close', hideUpdate]]); }
-          }],
-          ['Later', hideUpdate],
-        ]);
-      } catch (e) {
-        if (manual) showUpdate(`Could not check for updates: ${e}`, [['Close', hideUpdate]]);
+      let update;
+      try { update = await tauri.updater.check(); }
+      catch (e) {
+        if (manual) await tauri.dialog.message(`Could not check for updates.\n\n${e}`, { title: 'Check for Updates', kind: 'error' });
         else tauri.log?.warn(`update check failed: ${e}`);
+        return;
       }
+      if (!update) { if (manual) await tauri.dialog.message('Markdown Viewer is up to date.', { title: 'Check for Updates', kind: 'info' }); return; }
+      const notes = (update.body || '').trim();
+      const install = await tauri.dialog.ask(
+        `Markdown Viewer ${update.version} is available (you have ${update.currentVersion}).` + (notes ? `\n\n${notes.length > 600 ? notes.slice(0, 600) + '…' : notes}` : '') + '\n\nInstall it now? The app will relaunch when done.',
+        { title: 'Update Available', kind: 'info', okLabel: 'Install and Relaunch', cancelLabel: 'Later' });
+      if (!install) return;
+      try {
+        let total = 0, got = 0;
+        showUpdate('Downloading update…');
+        await update.downloadAndInstall((ev) => {
+          if (ev.event === 'Started') total = ev.data.contentLength || 0;
+          else if (ev.event === 'Progress') { got += ev.data.chunkLength; showUpdate(total ? `Downloading update… ${Math.round(got / total * 100)}%` : 'Downloading update…'); }
+          else if (ev.event === 'Finished') showUpdate('Installing…');
+        });
+        await tauri.process.relaunch();
+      } catch (e) { showUpdate(`Update failed: ${e}`, [['Close', hideUpdate]]); }
     }
     // Debug builds (the only ones with the log plugin) skip the launch check so development isn't nagged about releases.
     if (!tauri.log) setTimeout(() => checkForUpdates(false), 3000);

@@ -130,6 +130,9 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     let toc = MenuItemBuilder::with_id("toc", "Toggle Table of Contents").accelerator("CmdOrCtrl+Shift+T").build(app)?;
     let theme = MenuItemBuilder::with_id("theme", "Toggle Dark Mode").accelerator("CmdOrCtrl+Shift+D").build(app)?;
     let update = MenuItemBuilder::with_id("update", "Check for Updates…").build(app)?;
+    let zoom_in = MenuItemBuilder::with_id("zoom-in", "Zoom In").accelerator("CmdOrCtrl+=").build(app)?;
+    let zoom_out = MenuItemBuilder::with_id("zoom-out", "Zoom Out").accelerator("CmdOrCtrl+-").build(app)?;
+    let zoom_reset = MenuItemBuilder::with_id("zoom-reset", "Actual Size").accelerator("CmdOrCtrl+0").build(app)?;
 
     let file = SubmenuBuilder::new(app, "File")
         .item(&open).item(&reload).separator().item(&print).separator().close_window()
@@ -138,9 +141,9 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
         .undo().redo().separator().cut().copy().paste().select_all()
         .build()?;
     #[cfg(target_os = "macos")]
-    let view = SubmenuBuilder::new(app, "View").item(&toc).item(&theme).separator().fullscreen().build()?;
+    let view = SubmenuBuilder::new(app, "View").item(&toc).item(&theme).separator().item(&zoom_in).item(&zoom_out).item(&zoom_reset).separator().fullscreen().build()?;
     #[cfg(not(target_os = "macos"))]
-    let view = SubmenuBuilder::new(app, "View").item(&toc).item(&theme).separator().fullscreen().separator().item(&update).build()?;
+    let view = SubmenuBuilder::new(app, "View").item(&toc).item(&theme).separator().item(&zoom_in).item(&zoom_out).item(&zoom_reset).separator().fullscreen().separator().item(&update).build()?;
     let window = SubmenuBuilder::new(app, "Window").minimize().maximize().build()?;
 
     let mut menu = MenuBuilder::new(app);
