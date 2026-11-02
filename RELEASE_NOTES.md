@@ -1,0 +1,1 @@
+- Back and forward between documents: toolbar buttons, View › Back / Forward (⌘[ ⌘]), mouse back/forward buttons; going back restores your scroll position
