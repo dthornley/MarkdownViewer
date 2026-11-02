@@ -415,21 +415,28 @@ window.dispatchEvent(new Event('mermaid-ready'));
     else if (e.key === 'd') $('#btn-theme').click(); else if (e.key === 'p') { e.preventDefault(); print(); }
   });
 
-  // Auto-refresh when served by mdview (polls mtime)
+  // Auto-refresh when served by mdview (server-sent events, falling back to mtime polling)
   const params = new URLSearchParams(location.search);
   const fileParam = params.get('file');
   if (fileParam) {
     loadUrl(fileParam);
-    let lastMtime = null;
-    setInterval(async () => {
-      try {
-        const r = await fetch(`/__mtime?file=${encodeURIComponent(fileParam)}`, { cache: 'no-store' });
-        if (!r.ok) return;
-        const { mtime } = await r.json();
-        if (lastMtime !== null && mtime !== lastMtime) loadUrl(fileParam, true);
-        lastMtime = mtime;
-      } catch {}
-    }, 1000);
+    if (window.EventSource) {
+      const es = new EventSource(`/__events?file=${encodeURIComponent(fileParam)}`);
+      let opened = false;
+      es.addEventListener('open', () => { if (opened) loadUrl(fileParam, true); opened = true; }); // reconnect after server restart
+      es.addEventListener('message', (e) => { try { if (JSON.parse(e.data).type === 'change') loadUrl(fileParam, true); } catch {} });
+    } else {
+      let lastMtime = null;
+      setInterval(async () => {
+        try {
+          const r = await fetch(`/__mtime?file=${encodeURIComponent(fileParam)}`, { cache: 'no-store' });
+          if (!r.ok) return;
+          const { mtime } = await r.json();
+          if (lastMtime !== null && mtime !== lastMtime) loadUrl(fileParam, true);
+          lastMtime = mtime;
+        } catch {}
+      }, 1000);
+    }
   }
   addEventListener('hashchange', () => { const el = document.getElementById(decodeURIComponent(location.hash.slice(1))); el?.scrollIntoView(); });
 })();
