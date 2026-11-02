@@ -365,6 +365,8 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     let update = MenuItemBuilder::with_id("update", "Check for Updates…").build(app)?;
     #[cfg(target_os = "macos")]
     let default_app = MenuItemBuilder::with_id("default-app", "Make Default Markdown Viewer").build(app)?;
+    let back = MenuItemBuilder::with_id("back", "Back").accelerator("CmdOrCtrl+[").build(app)?;
+    let forward = MenuItemBuilder::with_id("forward", "Forward").accelerator("CmdOrCtrl+]").build(app)?;
     let zoom_in = MenuItemBuilder::with_id("zoom-in", "Zoom In").accelerator("CmdOrCtrl+=").build(app)?;
     let zoom_out = MenuItemBuilder::with_id("zoom-out", "Zoom Out").accelerator("CmdOrCtrl+-").build(app)?;
     let zoom_reset = MenuItemBuilder::with_id("zoom-reset", "Actual Size").accelerator("CmdOrCtrl+0").build(app)?;
@@ -391,7 +393,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
         .undo().redo().separator().cut().copy().paste().select_all()
         .build()?;
     let view = SubmenuBuilder::new(app, "View")
-        .item(&toc).item(&theme).separator().item(&zoom_in).item(&zoom_out).item(&zoom_reset).separator().item(&tabs).separator().fullscreen();
+        .item(&back).item(&forward).separator().item(&toc).item(&theme).separator().item(&zoom_in).item(&zoom_out).item(&zoom_reset).separator().item(&tabs).separator().fullscreen();
     #[cfg(not(target_os = "macos"))]
     let view = view.separator().item(&update);
     let view = view.build()?;
