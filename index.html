@@ -243,7 +243,9 @@
       const text = st.tokens[i + 1].children.filter(t => t.type === 'text' || t.type === 'code_inline').map(t => t.content).join('');
       let id = slugify(text) || 'section';
       const n = seen.get(id) || 0; seen.set(id, n + 1); if (n) id += '-' + n;
-      tok.attrSet('id', id);
+      // Set as a data attribute: DOMPurify drops ids that collide with document properties
+      // ("images", "links", "title", ...), so the real id is assigned after sanitizing.
+      tok.attrSet('data-mdv-id', id);
       const a = new st.Token('html_inline', '', 0);
       a.content = `<a class="anchor" href="#${id}" aria-hidden="true">#</a>`;
       st.tokens[i + 1].children.push(a);
@@ -281,6 +283,8 @@
   });
 
   // Resolve relative links/images against the file's base URL (when served via mdview or ?file=)
+  // markdown-it drops file: links by default; in the desktop app they open like any other local file.
+  if (window.__TAURI__) { const validate = md.validateLink; md.validateLink = (url) => validate(url) || /^file:/i.test(url); }
   const defaultImage = md.renderer.rules.image;
   md.renderer.rules.image = (tokens, idx, opts, env, self) => {
     const t = tokens[idx], src = t.attrGet('src');
@@ -318,9 +322,10 @@
     if (window.DOMPurify) html = DOMPurify.sanitize(html, {
       ADD_TAGS: ['details', 'summary', 'kbd', 'mark', 'sub', 'sup'], ADD_ATTR: ['target', 'open', 'align'],
       // In the desktop app documents and their images come from the mdv:// protocol, which DOMPurify would otherwise strip.
-      ...(window.__TAURI__ && { ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|matrix|mdv):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i }),
+      ...(window.__TAURI__ && { ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|matrix|mdv|file):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i }),
     });
     out.innerHTML = (fm ? `<details class="front-matter"><summary>Front matter</summary><pre><code>${md.utils.escapeHtml(fm)}</code></pre></details>` : '') + html;
+    out.querySelectorAll('[data-mdv-id]').forEach(h => { h.id = h.dataset.mdvId; h.removeAttribute('data-mdv-id'); });
     drop.style.display = 'none';
 
     // Math
@@ -371,7 +376,7 @@
     document.dispatchEvent(new CustomEvent('mdv-rendered'));
   }
 
-  function showError(msg) { errEl.textContent = msg; errEl.style.display = 'block'; }
+  function showError(msg) { errEl.textContent = msg; errEl.style.display = 'block'; $('#content').scrollTop = 0; }
 
   // ---------- TOC ----------
   function buildToc() {
@@ -594,13 +599,25 @@
     // Native dialog instead of <input type=file>; the Rust side loads the file into this window if it is empty, else into a new one.
     const pick = () => invoke('open_dialog');
     $('label.btn').addEventListener('click', (e) => { e.preventDefault(); e.stopImmediatePropagation(); pick(); }, true);
-    // Relative .md links open in the app; external links go to the default browser.
-    out.addEventListener('click', (e) => {
+    // Links to local files: Markdown opens in the app (also when written without the .md extension or
+    // as a file:// URL), anything else opens in its default app; web links go to the default browser.
+    out.addEventListener('click', async (e) => {
       const a = e.target.closest('a[href]');
       if (!a || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-      const href = a.href;
-      if (href.startsWith(MDV) && MD_EXT.test(new URL(href).pathname)) {
-        e.preventDefault(); location.hash = new URL(href).hash; openPath(fromUrl(href));
+      let href = a.href;
+      if (/^file:/i.test(href)) href = toUrl(decodeURIComponent(new URL(href).pathname)) + new URL(href).hash;
+      if (href.startsWith(MDV)) {
+        e.preventDefault();
+        const u = new URL(href), abs = fromUrl(href), current = state.baseUrl && fromUrl(state.baseUrl);
+        if (abs === current) { // same document: just jump to the heading
+          location.hash = u.hash; document.getElementById(decodeURIComponent(u.hash.slice(1)))?.scrollIntoView(); return;
+        }
+        if (MD_EXT.test(u.pathname)) { location.hash = u.hash; openPath(abs); return; }
+        if (!/\.[a-z0-9]+$/i.test(u.pathname)) {
+          const md = await fetch(`${u.origin}${u.pathname}.md`, { cache: 'no-store' }).catch(() => null);
+          if (md?.ok) { location.hash = u.hash; openPath(abs + '.md'); return; }
+        }
+        tauri.opener.openPath(abs).catch(err => showError(`Could not open ${abs}: ${err}`));
       } else if (/^(https?:|mailto:)/i.test(href)) { e.preventDefault(); tauri.opener.openUrl(href); }
     });
     // Files: Finder / Dock / command line, drag and drop, change notifications, menu.
