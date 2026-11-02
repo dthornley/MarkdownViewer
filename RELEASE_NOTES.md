@@ -1,0 +1,1 @@
+- Make Default Markdown Viewer only claims Markdown types (no longer asks about .txt/.text), continues past a declined prompt, and reports what failed
