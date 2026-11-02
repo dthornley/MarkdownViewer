@@ -50,6 +50,8 @@ Edits to the open file show up immediately, relative images resolve against the 
 
 Each document opens in its own window; **File › New Window** (⌘N) gives an empty one and **File › Open Recent** lists the last ten files. Turn on **View › Open Documents in Tabs** to have new documents join the front window as tabs instead; windows and tabs can be mixed freely with the usual macOS **Window** menu commands (Merge All Windows, Move Tab to New Window). Whatever is open when you quit, or when an update relaunches the app, is reopened next time.
 
+The app registers as a viewer for `.md`, `.markdown`, `.mdown` and `.mkd`, so it appears in Finder's Open With menu. To make double-click open files here, choose **Markdown Viewer › Make Default Markdown Viewer** once (the same as Get Info › Open with › Change All).
+
 **Download:** the latest `.dmg` is on the [Releases page](https://github.com/dthornley/MarkdownViewer/releases) (Apple Silicon). The app checks for a newer release a few seconds after launch and offers to install it; **Markdown Viewer › Check for Updates…** does the same on demand.
 
 ### Building the app
