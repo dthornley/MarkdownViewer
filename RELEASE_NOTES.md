@@ -1,3 +1,0 @@
-- Links to Markdown files written without the .md extension, or as file:// URLs, open in the app; links to other local files open in their default app
-- A link to a heading in the same document scrolls instead of reloading
-- Headings named Images, Links, Title or Body get their anchors and table-of-contents entries back
