@@ -7,7 +7,7 @@ A simple, friendly viewer for Markdown files. One HTML file, no build step. Use 
 - GitHub-flavored Markdown: tables, task lists, strikethrough, autolinks, footnotes
 - GitHub-style alerts (`> [!NOTE]`, `[!TIP]`, `[!WARNING]`, ...)
 - Syntax-highlighted code blocks with a copy button
-- Mermaid diagrams (flowcharts, sequence, pie, gantt, class, state, ...)
+- Mermaid diagrams (flowcharts, sequence, pie, gantt, class, state, ...); click any diagram or image to pan and zoom it full-window
 - LaTeX math via KaTeX (`$...$` and `$$...$$`)
 - YAML front matter shown in a collapsible block
 - Table of contents sidebar with scroll tracking, heading anchors
@@ -112,6 +112,9 @@ npx tauri signer generate -w ~/.tauri/markdownviewer.key
 | `t` | Toggle table of contents |
 | `d` | Toggle dark mode |
 | `p` | Print |
+| click a diagram or image | Open it full-window: scroll to zoom, drag to pan, `+` `-` `0`, `Esc` to close |
+
+In the desktop app, **View › Zoom In / Zoom Out / Actual Size** (⌘+ ⌘− ⌘0) scale the document; the browser's own zoom does the same when served by `mdview`.
 
 ## Notes
 
