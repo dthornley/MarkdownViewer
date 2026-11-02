@@ -21,12 +21,13 @@ const filePath = path.resolve(target);
 if (!fs.existsSync(filePath)) { console.error(`mdview: no such file: ${filePath}`); process.exit(1); }
 const root = path.dirname(filePath);
 const viewerHtml = path.join(__dirname, '..', 'index.html');
+const vendorDir = path.join(__dirname, '..', 'vendor'); // bundled rendering libraries (served at /vendor/)
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.md': 'text/markdown; charset=utf-8', '.markdown': 'text/markdown; charset=utf-8',
   '.txt': 'text/plain; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
   '.svg': 'image/svg+xml', '.webp': 'image/webp', '.css': 'text/css', '.js': 'text/javascript', '.json': 'application/json',
-  '.pdf': 'application/pdf',
+  '.pdf': 'application/pdf', '.woff2': 'font/woff2', '.mjs': 'text/javascript',
 };
 
 function safeJoin(base, rel) {
@@ -76,7 +77,9 @@ const server = http.createServer((req, res) => {
     res.on('close', () => { clearInterval(ping); watchers.get(rel)?.delete(onChange); });
     return;
   }
-  const p = safeJoin(root, pathname);
+  // Bundled libraries win over a document-folder file of the same name; anything else comes from the document's folder.
+  const vendored = pathname.startsWith('/vendor/') ? safeJoin(vendorDir, pathname.slice('/vendor/'.length)) : null;
+  const p = vendored && fs.existsSync(vendored) ? vendored : safeJoin(root, pathname);
   if (!p || !fs.existsSync(p) || fs.statSync(p).isDirectory()) { res.writeHead(404); return res.end('Not found'); }
   res.writeHead(200, { 'Content-Type': MIME[path.extname(p).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-store' });
   fs.createReadStream(p).pipe(res);

@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Markdown Viewer</title>
 <script>window.__mdvFailed = []; function __mdvFail(el) { __mdvFailed.push(el.src || el.href); dispatchEvent(new Event('mdv-lib-failed')); }</script>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" onerror="__mdvFail(this)">
-<link rel="stylesheet" id="hljs-light" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/styles/github.min.css" onerror="__mdvFail(this)">
-<link rel="stylesheet" id="hljs-dark" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/styles/github-dark.min.css" disabled onerror="__mdvFail(this)">
+<link rel="stylesheet" href="vendor/katex/katex.min.css" onerror="__mdvFail(this)">
+<link rel="stylesheet" id="hljs-light" href="vendor/hljs/github.min.css" onerror="__mdvFail(this)">
+<link rel="stylesheet" id="hljs-dark" href="vendor/hljs/github-dark.min.css" disabled onerror="__mdvFail(this)">
 <style>
   :root {
     --bg: #ffffff; --fg: #1f2328; --muted: #656d76; --border: #d0d7de;
@@ -148,20 +148,15 @@
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js" onerror="__mdvFail(this)"></script>
-<script src="https://cdn.jsdelivr.net/npm/markdown-it-footnote@4.0.0/dist/markdown-it-footnote.min.js" onerror="__mdvFail(this)"></script>
-<script src="https://cdn.jsdelivr.net/npm/markdown-it-task-lists@2.1.1/dist/markdown-it-task-lists.min.js" onerror="__mdvFail(this)"></script>
-<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/highlight.min.js" onerror="__mdvFail(this)"></script>
-<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" onerror="__mdvFail(this)"></script>
-<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onerror="__mdvFail(this)"></script>
-<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js" onerror="__mdvFail(this)"></script>
-<script type="module">
-const url = 'https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs';
-try {
-  window.mermaid = (await import(url)).default;
-  window.dispatchEvent(new Event('mermaid-ready'));
-} catch { __mdvFail({ src: url }); }
-</script>
+<script src="vendor/markdown-it.min.js" onerror="__mdvFail(this)"></script>
+<script src="vendor/markdown-it-footnote.min.js" onerror="__mdvFail(this)"></script>
+<script src="vendor/markdown-it-task-lists.min.js" onerror="__mdvFail(this)"></script>
+<script src="vendor/hljs/highlight.min.js" onerror="__mdvFail(this)"></script>
+<script src="vendor/katex/katex.min.js" onerror="__mdvFail(this)"></script>
+<script src="vendor/katex/auto-render.min.js" onerror="__mdvFail(this)"></script>
+<script src="vendor/purify.min.js" onerror="__mdvFail(this)"></script>
+<script src="vendor/mermaid.min.js" onerror="__mdvFail(this)"></script>
+<script>if (window.mermaid) dispatchEvent(new Event('mermaid-ready'));</script>
 <script>
 (() => {
   const $ = (s) => document.querySelector(s);
@@ -188,7 +183,7 @@ try {
   // ---------- CDN failure handling ----------
   // Required: markdown-it. Everything else degrades gracefully (see showNotice).
   if (!window.markdownit) {
-    showError('Markdown Viewer needs an internet connection the first time it loads (its rendering libraries come from jsDelivr).\n' +
+    showError('Markdown Viewer could not load its rendering libraries from the vendor/ folder next to index.html.\n' +
       'Failed to load:\n' + (window.__mdvFailed.length ? window.__mdvFailed.join('\n') : '(unknown)'));
     return;
   }
@@ -198,7 +193,7 @@ try {
     const missing = [...new Set(FEATURES.filter(([k]) => window.__mdvFailed.some(u => u.includes(k))).map(([, name]) => name))];
     const el = $('#notice');
     if (!missing.length || el.dataset.dismissed) return;
-    el.textContent = `Offline: ${missing.join(', ')} unavailable until the page is reloaded with an internet connection.`;
+    el.textContent = `Some libraries failed to load: ${missing.join(', ')} unavailable.`;
     el.title = 'Failed to load:\n' + window.__mdvFailed.join('\n');
     const btn = document.createElement('button'); btn.textContent = 'Dismiss';
     btn.onclick = () => { el.style.display = 'none'; el.dataset.dismissed = '1'; };
