@@ -1,0 +1,3 @@
+- Click a Mermaid diagram or image to view it full-window with pan and zoom (scroll, drag, +/-/0, Esc)
+- View › Zoom In / Zoom Out / Actual Size (⌘+ ⌘− ⌘0) scale the document
+- Check for Updates… now reports "up to date", an available update, or an error in a dialog
