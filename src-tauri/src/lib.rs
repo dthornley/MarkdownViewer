@@ -302,36 +302,48 @@ fn serve_local_file(request: Request<Vec<u8>>) -> Response<Vec<u8>> {
 // ---------- default app for Markdown (macOS) ----------
 
 /// Ask Launch Services to make this app the default for Markdown files: the same as
-/// Finder's Get Info › Open with › Change All. macOS shows its own confirmation prompt.
-/// Types are set one after another so the user sees one prompt at a time; `done` gets
-/// the outcome once all are through.
+/// Finder's Get Info › Open with › Change All. macOS shows its own confirmation prompt per
+/// type, so types are set one after another; `done` gets the outcome once all are through.
 #[cfg(target_os = "macos")]
-fn make_default_app(app: &AppHandle, done: impl Fn(Result<(), String>) + Send + Sync + 'static) {
+fn make_default_app(app: &AppHandle, done: impl Fn(Result<String, String>) + Send + Sync + 'static) {
     use objc2_app_kit::NSWorkspace;
     use objc2_foundation::{NSString, NSURL};
     use objc2_uniform_type_identifiers::UTType;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
+    const EXTENSIONS: [&str; 4] = ["md", "markdown", "mdown", "mkd"];
     // Markdown Viewer.app/Contents/MacOS/markdown-viewer -> Markdown Viewer.app
     let Some(bundle) = std::env::current_exe().ok().and_then(|p| p.ancestors().nth(3).map(Path::to_path_buf)) else {
         return done(Err("could not locate the app bundle".into()));
     };
+    // The public Markdown type, plus the type each extension resolves to on this Mac, but only
+    // when that type really is a Markdown type: an installed editor may map .mdown to its own
+    // type that also claims .txt and .text, and we must not take those over.
     let mut types: Vec<String> = vec!["net.daringfireball.markdown".into()];
-    for ext in ["md", "markdown", "mdown", "mkd"] {
+    for ext in EXTENSIONS {
         if let Some(t) = UTType::typeWithFilenameExtension(&NSString::from_str(ext)) {
             let id = t.identifier().to_string();
-            // Each type costs the user one confirmation prompt; skip dynamic placeholder types.
-            if !id.starts_with("dyn.") && !types.contains(&id) {
-                types.push(id);
+            let preferred = t.preferredFilenameExtension().map(|e| e.to_string().to_lowercase()).unwrap_or_default();
+            let is_markdown = id.to_lowercase().contains("markdown") || EXTENSIONS.contains(&preferred.as_str());
+            if id.starts_with("dyn.") || !is_markdown || types.contains(&id) {
+                log::info!("skipping type {id} for .{ext} (preferred extension .{preferred})");
+                continue;
             }
+            types.push(id);
         }
     }
     log::info!("setting default app for {types:?} to {}", bundle.display());
 
-    struct Job { bundle: PathBuf, types: Vec<String>, done: Box<dyn Fn(Result<(), String>) + Send + Sync> }
+    struct Job { bundle: PathBuf, types: Vec<String>, failures: Mutex<Vec<String>>, done: Box<dyn Fn(Result<String, String>) + Send + Sync> }
     fn step(job: Arc<Job>, index: usize) {
         if index >= job.types.len() {
-            return (job.done)(Ok(()));
+            let failures = job.failures.lock().unwrap();
+            let hint = if job.bundle.starts_with("/Applications") { "" } else { "\n\nMove Markdown Viewer to the Applications folder and try again." };
+            return (job.done)(if failures.is_empty() {
+                Ok(format!("Markdown Viewer is now the default app for Markdown files ({} type{}). Double-clicking a .md file in Finder opens it here.", job.types.len(), if job.types.len() == 1 { "" } else { "s" }))
+            } else {
+                Err(format!("Not changed for:\n{}{hint}", failures.join("\n")))
+            });
         }
         let Some(uti) = UTType::typeWithIdentifier(&NSString::from_str(&job.types[index])) else {
             return step(job, index + 1);
@@ -339,17 +351,17 @@ fn make_default_app(app: &AppHandle, done: impl Fn(Result<(), String>) + Send + 
         let url = NSURL::fileURLWithPath(&NSString::from_str(&job.bundle.to_string_lossy()));
         let next = job.clone();
         let handler = block2::RcBlock::new(move |err: *mut objc2_foundation::NSError| {
-            if err.is_null() {
-                step(next.clone(), index + 1);
-            } else {
+            if !err.is_null() {
                 let msg = unsafe { (*err).localizedDescription() }.to_string();
-                (next.done)(Err(msg));
+                log::warn!("default app for {}: {msg}", next.types[index]);
+                next.failures.lock().unwrap().push(format!("• {} — {msg}", next.types[index]));
             }
+            step(next.clone(), index + 1);
         });
         NSWorkspace::sharedWorkspace().setDefaultApplicationAtURL_toOpenContentType_completionHandler(&url, &uti, Some(&handler));
     }
     let _ = app;
-    step(Arc::new(Job { bundle, types, done: Box::new(done) }), 0);
+    step(Arc::new(Job { bundle, types, failures: Mutex::new(Vec::new()), done: Box::new(done) }), 0);
 }
 
 // ---------- menu ----------
@@ -427,7 +439,7 @@ fn on_menu(app: &AppHandle, id: &str) {
             let app = app.clone();
             make_default_app(&app.clone(), move |result| {
                 let (text, kind) = match result {
-                    Ok(()) => ("Markdown Viewer is now the default app for Markdown files. Double-clicking a .md file in Finder opens it here.".to_string(), MessageDialogKind::Info),
+                    Ok(msg) => (msg, MessageDialogKind::Info),
                     Err(e) => (format!("The default app was not changed.\n\n{e}"), MessageDialogKind::Error),
                 };
                 log::info!("default app result: {text}");
