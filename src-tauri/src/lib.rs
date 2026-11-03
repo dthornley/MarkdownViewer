@@ -305,32 +305,42 @@ fn serve_local_file(request: Request<Vec<u8>>) -> Response<Vec<u8>> {
 /// Finder's Get Info › Open with › Change All. macOS shows its own confirmation prompt per
 /// type, so types are set one after another; `done` gets the outcome once all are through.
 #[cfg(target_os = "macos")]
+const PRIMARY_TYPE: &str = "net.daringfireball.markdown";
+
+#[cfg(target_os = "macos")]
 fn make_default_app(app: &AppHandle, done: impl Fn(Result<String, String>) + Send + Sync + 'static) {
     use objc2_app_kit::NSWorkspace;
     use objc2_foundation::{NSString, NSURL};
     use objc2_uniform_type_identifiers::UTType;
     use std::sync::{Arc, Mutex};
 
+    // Extensions we try to claim, and every extension a type may list and still count as a
+    // pure Markdown type. An editor's own type (Ulysses, iA Writer, MindNode…) often maps
+    // .mdown to a type that also claims .txt, .text or .note; taking that over would make us
+    // the default for plain text files too, so such types are left alone.
     const EXTENSIONS: [&str; 4] = ["md", "markdown", "mdown", "mkd"];
+    const MARKDOWN_EXTENSIONS: [&str; 10] = ["md", "markdown", "mdown", "mkd", "mkdn", "mdwn", "mdtxt", "mdtext", "mmd", "multimarkdown"];
     // Markdown Viewer.app/Contents/MacOS/markdown-viewer -> Markdown Viewer.app
     let Some(bundle) = std::env::current_exe().ok().and_then(|p| p.ancestors().nth(3).map(Path::to_path_buf)) else {
         return done(Err("could not locate the app bundle".into()));
     };
-    // The public Markdown type, plus the type each extension resolves to on this Mac, but only
-    // when that type really is a Markdown type: an installed editor may map .mdown to its own
-    // type that also claims .txt and .text, and we must not take those over.
-    let mut types: Vec<String> = vec!["net.daringfireball.markdown".into()];
+    // The public Markdown type first, then the type each extension resolves to on this Mac.
+    let mut types: Vec<String> = vec![PRIMARY_TYPE.into()];
     for ext in EXTENSIONS {
-        if let Some(t) = UTType::typeWithFilenameExtension(&NSString::from_str(ext)) {
-            let id = t.identifier().to_string();
-            let preferred = t.preferredFilenameExtension().map(|e| e.to_string().to_lowercase()).unwrap_or_default();
-            let is_markdown = id.to_lowercase().contains("markdown") || EXTENSIONS.contains(&preferred.as_str());
-            if id.starts_with("dyn.") || !is_markdown || types.contains(&id) {
-                log::info!("skipping type {id} for .{ext} (preferred extension .{preferred})");
-                continue;
-            }
-            types.push(id);
+        let Some(t) = UTType::typeWithFilenameExtension(&NSString::from_str(ext)) else { continue };
+        let id = t.identifier().to_string();
+        if id.starts_with("dyn.") || types.contains(&id) {
+            continue;
         }
+        let exts: Vec<String> = t.tags()
+            .objectForKey(&NSString::from_str("public.filename-extension"))
+            .map(|a| a.iter().map(|e| e.to_string().to_lowercase()).collect())
+            .unwrap_or_default();
+        if let Some(other) = exts.iter().find(|e| !MARKDOWN_EXTENSIONS.contains(&e.as_str())) {
+            log::info!("skipping type {id} for .{ext}: it also claims .{other} ({exts:?})");
+            continue;
+        }
+        types.push(id);
     }
     log::info!("setting default app for {types:?} to {}", bundle.display());
 
@@ -339,10 +349,15 @@ fn make_default_app(app: &AppHandle, done: impl Fn(Result<String, String>) + Sen
         if index >= job.types.len() {
             let failures = job.failures.lock().unwrap();
             let hint = if job.bundle.starts_with("/Applications") { "" } else { "\n\nMove Markdown Viewer to the Applications folder and try again." };
-            return (job.done)(if failures.is_empty() {
-                Ok(format!("Markdown Viewer is now the default app for Markdown files ({} type{}). Double-clicking a .md file in Finder opens it here.", job.types.len(), if job.types.len() == 1 { "" } else { "s" }))
+            // The public type is what matters; an editor's private type that refuses the
+            // change (or that the user declined) only affects files tagged with that type.
+            let primary_failed = failures.iter().any(|f| f.starts_with(PRIMARY_TYPE));
+            return (job.done)(if primary_failed {
+                Err(format!("Not changed for:\n{}{hint}", failures.iter().map(|f| format!("• {f}")).collect::<Vec<_>>().join("\n")))
+            } else if failures.is_empty() {
+                Ok("Markdown Viewer is now the default app for Markdown files. Double-clicking a .md file in Finder opens it here.".into())
             } else {
-                Err(format!("Not changed for:\n{}{hint}", failures.join("\n")))
+                Ok(format!("Markdown Viewer is now the default app for Markdown files. Double-clicking a .md file in Finder opens it here.\n\nNot changed for the following editor-specific types, which only affect files another app has tagged with them:\n{}", failures.iter().map(|f| format!("• {f}")).collect::<Vec<_>>().join("\n")))
             });
         }
         let Some(uti) = UTType::typeWithIdentifier(&NSString::from_str(&job.types[index])) else {
@@ -354,7 +369,7 @@ fn make_default_app(app: &AppHandle, done: impl Fn(Result<String, String>) + Sen
             if !err.is_null() {
                 let msg = unsafe { (*err).localizedDescription() }.to_string();
                 log::warn!("default app for {}: {msg}", next.types[index]);
-                next.failures.lock().unwrap().push(format!("• {} — {msg}", next.types[index]));
+                next.failures.lock().unwrap().push(format!("{} — {msg}", next.types[index]));
             }
             step(next.clone(), index + 1);
         });
