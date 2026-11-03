@@ -1,6 +1,6 @@
 {
   "name": "markdown-viewer",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "A simple, friendly Markdown viewer with GFM, Mermaid, math and syntax highlighting",
   "bin": {
     "mdview": "bin/mdview.js"
