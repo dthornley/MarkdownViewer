@@ -379,6 +379,94 @@ fn make_default_app(app: &AppHandle, done: impl Fn(Result<String, String>) + Sen
     step(Arc::new(Job { bundle, types, failures: Mutex::new(Vec::new()), done: Box::new(done) }), 0);
 }
 
+// ---------- command line tool (macOS) ----------
+
+/// The `mdview` shell script the app installs; it opens files here through `open -b`.
+#[cfg(target_os = "macos")]
+const CLI_SCRIPT: &str = include_str!("../cli/mdview");
+
+/// Where `mdview` may go, in order of preference: the conventional `/usr/local/bin` first
+/// (usually needs an administrator), then Homebrew's directory when Homebrew is installed,
+/// then the per-user directories.
+#[cfg(target_os = "macos")]
+const CLI_DIRS: [&str; 4] = ["/usr/local/bin", "/opt/homebrew/bin", "~/.local/bin", "~/bin"];
+
+/// Single-quote `s` for `/bin/sh`.
+#[cfg(target_os = "macos")]
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// PATH as the user's login shell sees it; a GUI app's own PATH is much shorter.
+#[cfg(target_os = "macos")]
+fn login_shell_path() -> Vec<PathBuf> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    let out = std::process::Command::new(&shell).args(["-l", "-c", "printf '%s' \"$PATH\""]).output();
+    let path = match out {
+        Ok(o) if o.status.success() && !o.stdout.is_empty() => String::from_utf8_lossy(&o.stdout).into_owned(),
+        _ => std::env::var("PATH").unwrap_or_default(),
+    };
+    path.split(':').filter(|p| !p.is_empty()).map(PathBuf::from).collect()
+}
+
+/// AppleScript that runs `cmd` through `/bin/sh` after macOS asks for an administrator password.
+#[cfg(target_os = "macos")]
+fn admin_script(cmd: &str, dir: &Path) -> String {
+    let quoted = cmd.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("do shell script \"{quoted}\" with administrator privileges with prompt \"Markdown Viewer wants to install the mdview command in {}.\"", dir.display())
+}
+
+/// Write `mdview` into the first standard bin directory on the user's PATH, asking for an
+/// administrator password through macOS when that directory is not writable by the user.
+#[cfg(target_os = "macos")]
+fn install_cli() -> Result<String, String> {
+    let home = std::env::var("HOME").map_err(|_| "HOME is not set")?;
+    let candidates: Vec<PathBuf> = CLI_DIRS.iter()
+        .map(|d| PathBuf::from(d.replacen('~', &home, 1)))
+        .filter(|d| d != Path::new("/opt/homebrew/bin") || d.join("brew").exists())
+        .collect();
+    let on_path = login_shell_path();
+    let is_on_path = |d: &PathBuf| on_path.iter().any(|p| p == d);
+    let writable = |d: &PathBuf| d.is_dir() && std::fs::metadata(d).map(|m| !m.permissions().readonly()).unwrap_or(false)
+        && std::fs::OpenOptions::new().write(true).create(true).truncate(false).open(d.join(".mdview-write-test"))
+            .map(|_| { let _ = std::fs::remove_file(d.join(".mdview-write-test")); true }).unwrap_or(false);
+    // The first candidate on PATH; /usr/local/bin is created if missing, since the system
+    // puts it on PATH through /etc/paths regardless.
+    let dir = candidates.iter().find(|d| is_on_path(d) && (d.is_dir() || d == &Path::new("/usr/local/bin")))
+        .cloned()
+        .unwrap_or_else(|| PathBuf::from("/usr/local/bin"));
+    let target = dir.join("mdview");
+
+    // Stage the script somewhere we can always write, then copy it into place.
+    let staged = std::env::temp_dir().join(format!("mdview-{}", std::process::id()));
+    std::fs::write(&staged, CLI_SCRIPT).map_err(|e| format!("could not write {}: {e}", staged.display()))?;
+    // Replace rather than overwrite: an existing `mdview` may be a symlink (npm link) and
+    // copying through it would clobber whatever it points at.
+    let direct = writable(&dir) && { let _ = std::fs::remove_file(&target); std::fs::copy(&staged, &target).is_ok() };
+    if !direct {
+        let cmd = format!("/bin/mkdir -p {d} && /bin/rm -f {t} && /bin/cp {s} {t} && /bin/chmod 755 {t}",
+            d = sh_quote(&dir.to_string_lossy()), s = sh_quote(&staged.to_string_lossy()), t = sh_quote(&target.to_string_lossy()));
+        let script = admin_script(&cmd, &dir);
+        let out = std::process::Command::new("/usr/bin/osascript").args(["-e", &script]).output()
+            .map_err(|e| format!("could not run osascript: {e}"))?;
+        let _ = std::fs::remove_file(&staged);
+        if !out.status.success() {
+            let err = String::from_utf8_lossy(&out.stderr);
+            return Err(if err.contains("-128") { "Cancelled.".into() } else { err.trim().to_string() });
+        }
+    } else {
+        let _ = std::fs::remove_file(&staged);
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
+    }
+    log::info!("installed {}", target.display());
+    let mut msg = format!("The mdview command is installed in {}.\n\nIn a new terminal window, mdview README.md opens the file here, and mdview --help lists the options.", dir.display());
+    if !is_on_path(&dir) {
+        msg.push_str(&format!("\n\n{} is not on your shell's PATH yet; add it to your shell profile to use mdview by name.", dir.display()));
+    }
+    Ok(msg)
+}
+
 // ---------- menu ----------
 
 fn build_menu(app: &AppHandle) -> tauri::Result<()> {
@@ -392,6 +480,8 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     let update = MenuItemBuilder::with_id("update", "Check for Updates…").build(app)?;
     #[cfg(target_os = "macos")]
     let default_app = MenuItemBuilder::with_id("default-app", "Make Default Markdown Viewer").build(app)?;
+    #[cfg(target_os = "macos")]
+    let install_cli_item = MenuItemBuilder::with_id("install-cli", "Install Command Line Tool…").build(app)?;
     let back = MenuItemBuilder::with_id("back", "Back").accelerator("CmdOrCtrl+[").build(app)?;
     let forward = MenuItemBuilder::with_id("forward", "Forward").accelerator("CmdOrCtrl+]").build(app)?;
     let zoom_in = MenuItemBuilder::with_id("zoom-in", "Zoom In").accelerator("CmdOrCtrl+=").build(app)?;
@@ -432,7 +522,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     #[cfg(target_os = "macos")]
     {
         let app_menu = SubmenuBuilder::new(app, "Markdown Viewer")
-            .about(None).item(&update).item(&default_app).separator().services().separator().hide().hide_others().show_all().separator().quit()
+            .about(None).item(&update).item(&default_app).item(&install_cli_item).separator().services().separator().hide().hide_others().show_all().separator().quit()
             .build()?;
         menu = menu.item(&app_menu);
     }
@@ -459,6 +549,20 @@ fn on_menu(app: &AppHandle, id: &str) {
                 };
                 log::info!("default app result: {text}");
                 app.dialog().message(text).title("Default Markdown Viewer").kind(kind).show(|_| {});
+            });
+        }
+        #[cfg(target_os = "macos")]
+        "install-cli" => {
+            use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+            let app = app.clone();
+            // The login shell and the password prompt can take a moment; keep the UI free.
+            std::thread::spawn(move || {
+                let (text, kind) = match install_cli() {
+                    Ok(msg) => (msg, MessageDialogKind::Info),
+                    Err(e) => (format!("The mdview command was not installed.\n\n{e}"), MessageDialogKind::Error),
+                };
+                log::info!("install cli result: {text}");
+                app.dialog().message(text).title("Command Line Tool").kind(kind).show(|_| {});
             });
         }
         "recent-clear" => {
@@ -583,4 +687,33 @@ pub fn run() {
         }
         _ => {}
     });
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_quoting_survives_spaces_and_quotes() {
+        let q = sh_quote("/Users/o'brien/my bin");
+        let out = std::process::Command::new("/bin/sh").args(["-c", &format!("printf '%s' {q}")]).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "/Users/o'brien/my bin");
+    }
+
+    #[test]
+    fn admin_script_is_valid_applescript() {
+        let cmd = format!("/bin/echo {}", sh_quote("a \"b\" c"));
+        let script = admin_script(&cmd, Path::new("/usr/local/bin"));
+        // Compile only; running it would prompt for a password.
+        let out = std::process::Command::new("/usr/bin/osacompile").args(["-o", "/dev/null", "-e", &script]).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(script.contains("with administrator privileges"));
+    }
+
+    #[test]
+    fn bundled_script_parses_and_names_the_bundle_id() {
+        assert!(CLI_SCRIPT.contains("com.thornley.markdownviewer"));
+        let out = std::process::Command::new("/bin/sh").args(["-n", concat!(env!("CARGO_MANIFEST_DIR"), "/cli/mdview")]).output().unwrap();
+        assert!(out.status.success());
+    }
 }
