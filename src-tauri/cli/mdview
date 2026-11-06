@@ -27,4 +27,4 @@ for f in "$@"; do
 done
 [ "$status" -eq 0 ] || exit "$status"
 
-exec open -b "$BUNDLE_ID" "$@"
+exec open -b "$BUNDLE_ID" -- "$@"

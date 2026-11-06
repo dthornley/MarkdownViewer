@@ -391,35 +391,85 @@ const CLI_SCRIPT: &str = include_str!("../cli/mdview");
 #[cfg(target_os = "macos")]
 const CLI_DIRS: [&str; 4] = ["/usr/local/bin", "/opt/homebrew/bin", "~/.local/bin", "~/bin"];
 
+/// Set while an install is running, so a second menu click during the password prompt is ignored.
+#[cfg(target_os = "macos")]
+static CLI_INSTALLING: AtomicBool = AtomicBool::new(false);
+
 /// Single-quote `s` for `/bin/sh`.
 #[cfg(target_os = "macos")]
 fn sh_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-/// PATH as the user's login shell sees it; a GUI app's own PATH is much shorter.
+/// Run `cmd` and return its stdout, or None when it fails or has not finished within `timeout`.
+#[cfg(target_os = "macos")]
+fn output_within(mut cmd: std::process::Command, timeout: std::time::Duration) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut child = cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).stdin(std::process::Stdio::null()).spawn().ok()?;
+    let mut stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || { let mut v = Vec::new(); let _ = stdout.read_to_end(&mut v); v });
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return if status.success() { reader.join().ok() } else { None },
+            Ok(None) if start.elapsed() < timeout => std::thread::sleep(std::time::Duration::from_millis(50)),
+            _ => { let _ = child.kill(); let _ = child.wait(); return None; }
+        }
+    }
+}
+
+/// PATH as the user's login shell sees it; a GUI app's own PATH is much shorter. Falls back
+/// to the system's /etc/paths plus our own PATH when the shell fails or takes too long.
 #[cfg(target_os = "macos")]
 fn login_shell_path() -> Vec<PathBuf> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-    let out = std::process::Command::new(&shell).args(["-l", "-c", "printf '%s' \"$PATH\""]).output();
-    let path = match out {
-        Ok(o) if o.status.success() && !o.stdout.is_empty() => String::from_utf8_lossy(&o.stdout).into_owned(),
-        _ => std::env::var("PATH").unwrap_or_default(),
+    // fish keeps $PATH as a list and has no POSIX quoting; everything else is sh-compatible.
+    let print = if shell.ends_with("fish") { "string join : $PATH" } else { "printf '%s' \"$PATH\"" };
+    let mut cmd = std::process::Command::new(&shell);
+    cmd.args(["-l", "-c", print]);
+    let path = match output_within(cmd, std::time::Duration::from_secs(5)) {
+        Some(out) if !out.is_empty() => String::from_utf8_lossy(&out).into_owned(),
+        _ => {
+            log::warn!("could not read PATH from {shell}; using /etc/paths");
+            let mut cmd = std::process::Command::new("/usr/libexec/path_helper");
+            cmd.arg("-c");
+            let system = output_within(cmd, std::time::Duration::from_secs(5))
+                .map(|o| String::from_utf8_lossy(&o).trim().trim_start_matches("setenv PATH \"").trim_end_matches("\";").to_string())
+                .unwrap_or_default();
+            format!("{system}:{}", std::env::var("PATH").unwrap_or_default())
+        }
     };
     path.split(':').filter(|p| !p.is_empty()).map(PathBuf::from).collect()
+}
+
+/// Whether this process can create files in `dir`: a real probe, since mode bits and ACLs lie.
+#[cfg(target_os = "macos")]
+fn user_writable(dir: &Path) -> bool {
+    let probe = dir.join(format!(".mdview-write-test-{}", std::process::id()));
+    match std::fs::OpenOptions::new().write(true).create_new(true).open(&probe) {
+        Ok(_) => { let _ = std::fs::remove_file(&probe); true }
+        Err(_) => false,
+    }
+}
+
+/// Quote `s` as an AppleScript string literal.
+#[cfg(target_os = "macos")]
+fn applescript_string(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 /// AppleScript that runs `cmd` through `/bin/sh` after macOS asks for an administrator password.
 #[cfg(target_os = "macos")]
 fn admin_script(cmd: &str, dir: &Path) -> String {
-    let quoted = cmd.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("do shell script \"{quoted}\" with administrator privileges with prompt \"Markdown Viewer wants to install the mdview command in {}.\"", dir.display())
+    let prompt = format!("Markdown Viewer wants to install the mdview command in {}.", dir.display());
+    format!("do shell script {} with administrator privileges with prompt {}", applescript_string(cmd), applescript_string(&prompt))
 }
 
 /// Write `mdview` into the first standard bin directory on the user's PATH, asking for an
 /// administrator password through macOS when that directory is not writable by the user.
 #[cfg(target_os = "macos")]
 fn install_cli() -> Result<String, String> {
+    use std::os::unix::fs::PermissionsExt;
     let home = std::env::var("HOME").map_err(|_| "HOME is not set")?;
     let candidates: Vec<PathBuf> = CLI_DIRS.iter()
         .map(|d| PathBuf::from(d.replacen('~', &home, 1)))
@@ -427,9 +477,6 @@ fn install_cli() -> Result<String, String> {
         .collect();
     let on_path = login_shell_path();
     let is_on_path = |d: &PathBuf| on_path.iter().any(|p| p == d);
-    let writable = |d: &PathBuf| d.is_dir() && std::fs::metadata(d).map(|m| !m.permissions().readonly()).unwrap_or(false)
-        && std::fs::OpenOptions::new().write(true).create(true).truncate(false).open(d.join(".mdview-write-test"))
-            .map(|_| { let _ = std::fs::remove_file(d.join(".mdview-write-test")); true }).unwrap_or(false);
     // The first candidate on PATH; /usr/local/bin is created if missing, since the system
     // puts it on PATH through /etc/paths regardless.
     let dir = candidates.iter().find(|d| is_on_path(d) && (d.is_dir() || d == &Path::new("/usr/local/bin")))
@@ -437,32 +484,39 @@ fn install_cli() -> Result<String, String> {
         .unwrap_or_else(|| PathBuf::from("/usr/local/bin"));
     let target = dir.join("mdview");
 
-    // Stage the script somewhere we can always write, then copy it into place.
-    let staged = std::env::temp_dir().join(format!("mdview-{}", std::process::id()));
+    // Stage the script somewhere we can always write, then copy it into place. Replace rather
+    // than overwrite: an existing `mdview` may be a symlink (npm link) and copying through it
+    // would clobber whatever it points at.
+    let staged = std::env::temp_dir().join(format!("mdview-{}-{}", std::process::id(), std::time::SystemTime::UNIX_EPOCH.elapsed().map(|d| d.as_nanos()).unwrap_or(0)));
     std::fs::write(&staged, CLI_SCRIPT).map_err(|e| format!("could not write {}: {e}", staged.display()))?;
-    // Replace rather than overwrite: an existing `mdview` may be a symlink (npm link) and
-    // copying through it would clobber whatever it points at.
-    let direct = writable(&dir) && { let _ = std::fs::remove_file(&target); std::fs::copy(&staged, &target).is_ok() };
-    if !direct {
+    let result = if dir.is_dir() && user_writable(&dir) {
+        let _ = std::fs::remove_file(&target);
+        std::fs::copy(&staged, &target)
+            .and_then(|_| std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)))
+            .map_err(|e| format!("could not write {}: {e}", target.display()))
+    } else {
         let cmd = format!("/bin/mkdir -p {d} && /bin/rm -f {t} && /bin/cp {s} {t} && /bin/chmod 755 {t}",
             d = sh_quote(&dir.to_string_lossy()), s = sh_quote(&staged.to_string_lossy()), t = sh_quote(&target.to_string_lossy()));
         let script = admin_script(&cmd, &dir);
-        let out = std::process::Command::new("/usr/bin/osascript").args(["-e", &script]).output()
-            .map_err(|e| format!("could not run osascript: {e}"))?;
-        let _ = std::fs::remove_file(&staged);
-        if !out.status.success() {
-            let err = String::from_utf8_lossy(&out.stderr);
-            return Err(if err.contains("-128") { "Cancelled.".into() } else { err.trim().to_string() });
-        }
-    } else {
-        let _ = std::fs::remove_file(&staged);
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
-    }
+        std::process::Command::new("/usr/bin/osascript").args(["-e", &script]).output()
+            .map_err(|e| format!("could not run osascript: {e}"))
+            .and_then(|out| {
+                if out.status.success() { return Ok(()); }
+                let err = String::from_utf8_lossy(&out.stderr);
+                // osascript reports a dismissed password sheet as "User canceled. (-128)".
+                Err(if err.contains("(-128)") { "Cancelled.".into() } else { err.trim().to_string() })
+            })
+    };
+    let _ = std::fs::remove_file(&staged);
+    result?;
     log::info!("installed {}", target.display());
+
     let mut msg = format!("The mdview command is installed in {}.\n\nIn a new terminal window, mdview README.md opens the file here, and mdview --help lists the options.", dir.display());
     if !is_on_path(&dir) {
         msg.push_str(&format!("\n\n{} is not on your shell's PATH yet; add it to your shell profile to use mdview by name.", dir.display()));
+    } else if let Some(other) = on_path.iter().map(|p| p.join("mdview")).find(|p| p.is_file()).filter(|p| p != &target) {
+        // Something earlier on PATH (an npm link, say) will still win.
+        msg.push_str(&format!("\n\nNote: {} comes first on your PATH and will be used instead; remove it to use this one.", other.display()));
     }
     Ok(msg)
 }
@@ -554,10 +608,15 @@ fn on_menu(app: &AppHandle, id: &str) {
         #[cfg(target_os = "macos")]
         "install-cli" => {
             use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+            if CLI_INSTALLING.swap(true, Ordering::SeqCst) {
+                return; // already running, probably waiting at the password prompt
+            }
             let app = app.clone();
             // The login shell and the password prompt can take a moment; keep the UI free.
             std::thread::spawn(move || {
-                let (text, kind) = match install_cli() {
+                let result = install_cli();
+                CLI_INSTALLING.store(false, Ordering::SeqCst);
+                let (text, kind) = match result {
                     Ok(msg) => (msg, MessageDialogKind::Info),
                     Err(e) => (format!("The mdview command was not installed.\n\n{e}"), MessageDialogKind::Error),
                 };
@@ -703,11 +762,24 @@ mod tests {
     #[test]
     fn admin_script_is_valid_applescript() {
         let cmd = format!("/bin/echo {}", sh_quote("a \"b\" c"));
-        let script = admin_script(&cmd, Path::new("/usr/local/bin"));
+        let script = admin_script(&cmd, Path::new("/Users/o\"brien/my bin"));
         // Compile only; running it would prompt for a password.
         let out = std::process::Command::new("/usr/bin/osacompile").args(["-o", "/dev/null", "-e", &script]).output().unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         assert!(script.contains("with administrator privileges"));
+    }
+
+    #[test]
+    fn user_writable_probes_for_real() {
+        assert!(user_writable(&std::env::temp_dir()));
+        assert!(!user_writable(Path::new("/System")));
+        assert!(!user_writable(Path::new("/nonexistent-dir")));
+    }
+
+    #[test]
+    fn login_shell_path_has_system_dirs() {
+        let path = login_shell_path();
+        assert!(path.iter().any(|p| p == Path::new("/usr/bin")), "{path:?}");
     }
 
     #[test]
