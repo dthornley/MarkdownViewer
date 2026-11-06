@@ -1,0 +1,30 @@
+#!/bin/sh
+# mdview: open Markdown files in Markdown Viewer.app.
+# Installed by Markdown Viewer › Install Command Line Tool…; the app rewrites it on each install.
+
+BUNDLE_ID=com.thornley.markdownviewer
+
+usage() {
+  cat <<'USAGE'
+usage: mdview [file ...]
+
+Opens each file in Markdown Viewer. With no file, brings the app to the front.
+The app reloads a document whenever it changes on disk.
+USAGE
+}
+
+case "$1" in
+  -h|--help) usage; exit 0 ;;
+  --) shift ;;
+esac
+
+status=0
+for f in "$@"; do
+  if [ ! -e "$f" ]; then
+    echo "mdview: $f: no such file" >&2
+    status=1
+  fi
+done
+[ "$status" -eq 0 ] || exit "$status"
+
+exec open -b "$BUNDLE_ID" -- "$@"

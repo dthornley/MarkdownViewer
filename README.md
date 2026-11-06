@@ -1,6 +1,6 @@
 # Markdown Viewer
 
-A simple, friendly viewer for Markdown files. One HTML file, no build step. Use it from the terminal with the `mdview` command, or install the macOS app and double-click any `.md` file.
+A simple, friendly viewer for Markdown files. One HTML file, no build step. Install the macOS app and double-click any `.md` file or open it from the terminal with the `mdview` command, or serve the page to a browser straight from this checkout.
 
 ## Features
 
@@ -15,24 +15,29 @@ A simple, friendly viewer for Markdown files. One HTML file, no build step. Use 
 - Works fully offline: all rendering libraries are bundled
 - macOS app (Tauri): opens `.md` files from Finder, drag and drop onto the window, live reload, one window per document (or tabs), Open Recent, and the open documents come back on relaunch
 - Drag and drop, file picker, or paste Markdown straight into the page
-- Live reload when opened through the `mdview` command (server-sent events, keeps your scroll position)
+- `mdview` command, installed from the app's menu, to open files from the terminal
+- Live reload when served to a browser with `bin/mdview.js` (server-sent events, keeps your scroll position)
 - Relative links to other `.md` files open inside the viewer; back and forward work
 
 ## Usage
 
-### From the terminal (recommended)
+### With the macOS app (recommended)
+
+Install the app (below) and choose **Markdown Viewer › Install Command Line Tool…** once. From then on:
+
+```sh
+mdview README.md notes/todo.md
+```
+
+opens the files in the app, which reloads them whenever they change on disk. `mdview --help` lists the options. The command is a small shell script; the app puts it in `/usr/local/bin` (asking for an administrator password), or, when that is not on your shell's PATH, in Homebrew's bin directory, `~/.local/bin` or `~/bin`. Choosing the menu item again rewrites it, so it is safe to repeat after an update.
+
+### In a browser, from this checkout
 
 ```sh
 node bin/mdview.js path/to/file.md
 ```
 
-This starts a tiny local server, opens your browser, and reloads the page the moment the file changes, keeping your scroll position. Relative images resolve correctly, and links to other Markdown files in the same tree open in the viewer.
-
-Install it globally so `mdview file.md` works anywhere:
-
-```sh
-npm link
-```
+This starts a tiny local server, opens your browser, and reloads the page the moment the file changes, keeping your scroll position. Relative images resolve correctly, and links to other Markdown files in the same tree open in the viewer. It needs Node but not the app, so it also works on Linux and Windows. `npm link` installs it as `mdview` too; do not combine that with the app's command, as they share the name.
 
 ### Without a server
 
@@ -43,7 +48,8 @@ Open `index.html` directly in a browser and drop a `.md` file onto it, use **Ope
 The same page, wrapped in a small [Tauri](https://tauri.app) shell (`src-tauri/`). It registers as a viewer for `.md`, `.markdown`, `.mdown` and `.mkd`, so files open from Finder, from the Dock icon, by drag and drop onto the window, with **File › Open…** (⌘O), or from the terminal:
 
 ```sh
-open -a "Markdown Viewer" README.md
+mdview README.md                     # after Markdown Viewer › Install Command Line Tool…
+open -a "Markdown Viewer" README.md  # works without it
 ```
 
 Edits to the open file show up immediately, relative images resolve against the file, links to other Markdown files open in the app, and external links open in your browser.
@@ -134,8 +140,9 @@ If a library fails to load (for example `index.html` was copied somewhere withou
 ```
 index.html            the whole viewer: markup, styles and script
 vendor/               bundled rendering libraries (markdown-it, highlight.js, KaTeX, DOMPurify, Mermaid)
-bin/mdview.js         CLI: tiny local server with live reload (fs.watch + server-sent events)
+bin/mdview.js         browser mode: tiny local server with live reload (fs.watch + server-sent events)
 src-tauri/            desktop app shell: Rust side (mdv:// file protocol, watcher, menu), config, icons
+src-tauri/cli/mdview  the `mdview` shell script the app installs (opens files via `open -b`)
 scripts/stage-frontend.js   copies index.html + vendor/ into dist/ for the app build
 scripts/vendor.js           downloads the pinned rendering libraries into vendor/
 scripts/dist.sh       builds, signs, notarizes and packages the macOS app into release/
