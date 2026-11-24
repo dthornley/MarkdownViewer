@@ -531,6 +531,9 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     let print = MenuItemBuilder::with_id("print", "Print…").accelerator("CmdOrCtrl+P").build(app)?;
     let toc = MenuItemBuilder::with_id("toc", "Toggle Table of Contents").accelerator("CmdOrCtrl+Shift+T").build(app)?;
     let theme = MenuItemBuilder::with_id("theme", "Toggle Dark Mode").accelerator("CmdOrCtrl+Shift+D").build(app)?;
+    let find = MenuItemBuilder::with_id("find", "Find…").accelerator("CmdOrCtrl+F").build(app)?;
+    let find_next = MenuItemBuilder::with_id("find-next", "Find Next").accelerator("CmdOrCtrl+G").build(app)?;
+    let find_prev = MenuItemBuilder::with_id("find-prev", "Find Previous").accelerator("CmdOrCtrl+Shift+G").build(app)?;
     let update = MenuItemBuilder::with_id("update", "Check for Updates…").build(app)?;
     #[cfg(target_os = "macos")]
     let default_app = MenuItemBuilder::with_id("default-app", "Make Default Markdown Viewer").build(app)?;
@@ -561,7 +564,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
         .item(&new_win).item(&open).item(&recent_menu).item(&reload).separator().item(&print).separator().close_window()
         .build()?;
     let edit = SubmenuBuilder::new(app, "Edit")
-        .undo().redo().separator().cut().copy().paste().select_all()
+        .undo().redo().separator().cut().copy().paste().select_all().separator().item(&find).item(&find_next).item(&find_prev)
         .build()?;
     let view = SubmenuBuilder::new(app, "View")
         .item(&back).item(&forward).separator().item(&toc).item(&theme).separator().item(&zoom_in).item(&zoom_out).item(&zoom_reset).separator().item(&tabs).separator().fullscreen();

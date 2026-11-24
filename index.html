@@ -130,9 +130,19 @@
   #lightbox .stage svg, #lightbox .stage img { display: block; max-width: none !important; }
   #lightbox .bar { position: absolute; top: 12px; right: 12px; display: flex; gap: 6px; align-items: center; z-index: 1; }
   #lightbox .bar span { font-size: 12px; color: var(--muted); margin-right: 6px; }
+  /* Find in page */
+  #find { display: none; position: fixed; top: 52px; right: 16px; z-index: 15; gap: 6px; align-items: center; padding: 6px 8px;
+          background: var(--toolbar-bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.15); }
+  body.finding #find { display: flex; }
+  #find input { font: inherit; font-size: 13px; padding: 4px 8px; width: 220px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); }
+  #find input:focus { outline: none; border-color: var(--accent); }
+  #find .count { font-size: 12px; color: var(--muted); min-width: 64px; text-align: center; }
+  #find button { padding: 3px 8px; }
+  ::highlight(mdv-find) { background: var(--mark); color: inherit; }
+  ::highlight(mdv-find-current) { background: #ff9632; color: #000; }
   @media (max-width: 800px) { #toc { display: none; } article { padding: 20px; } }
   @media print {
-    #toolbar, #toc { display: none !important; }
+    #toolbar, #toc, #find { display: none !important; }
     #content { overflow: visible; } article { max-width: none; padding: 0; }
     .md pre { white-space: pre-wrap; }
   }
@@ -145,11 +155,13 @@
   <label class="btn" for="file-input">Open…</label>
   <input type="file" id="file-input" accept=".md,.markdown,.mdown,.mkd,.txt,text/markdown,text/plain">
   <button id="btn-reload" title="Re-read the file (R)">Reload</button>
+  <button id="btn-find" title="Find in page (⌘F)">Find</button>
   <button id="btn-toc" title="Toggle table of contents (T)">TOC</button>
   <button id="btn-theme" title="Toggle dark mode (D)">Dark</button>
   <button id="btn-print" title="Print / Save as PDF (P)">Print</button>
   <span id="zoom" title="Reset zoom (⌘0)"></span>
 </div>
+<div id="find" role="search"><input type="search" placeholder="Find in document" aria-label="Find in document" autocomplete="off" spellcheck="false"><span class="count"></span><button data-f="prev" title="Previous match (⇧↩)">‹</button><button data-f="next" title="Next match (↩)">›</button><button data-f="close" title="Close (Esc)">Close</button></div>
 <div id="lightbox"><div class="bar"><span></span><button data-z="out" title="Zoom out">−</button><button data-z="in" title="Zoom in">+</button><button data-z="fit" title="Fit to window">Fit</button><button data-z="close" title="Close (Esc)">Close</button></div><div class="stage"></div></div>
 <div id="main">
   <nav id="toc" class="hidden"></nav>
@@ -530,10 +542,132 @@
     if (e.key === 'Escape') closeLightbox(); else if (e.key === '+' || e.key === '=') lbZoom(1.25); else if (e.key === '-') lbZoom(0.8); else if (e.key === '0') lbFit(); else return;
     e.preventDefault(); e.stopImmediatePropagation();
   }, true);
+  // ---------- Text index ----------
+  // The rendered document as one string, with a map back to its text nodes, so a match or a
+  // comment anchor found in the string becomes a DOM Range (which may span several elements).
+  // Decorative text (anchors, copy buttons, KaTeX's hidden duplicate) is left out.
+  const INDEX_SKIP = 'script, style, .copy, .lang, .anchor, [aria-hidden="true"]';
+  function buildIndex(root) {
+    const entries = [], parts = [], byNode = new Map();
+    let pos = 0;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n) => n.parentElement?.closest(INDEX_SKIP) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+    });
+    for (let n; (n = walker.nextNode());) {
+      if (!n.data.length) continue;
+      const e = { node: n, start: pos, end: pos + n.data.length };
+      entries.push(e); byNode.set(n, e); parts.push(n.data); pos = e.end;
+    }
+    // Entry containing string offset `off`; for an end offset the entry that ends at `off` wins.
+    const locate = (off, isEnd) => {
+      let lo = 0, hi = entries.length - 1;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (isEnd ? entries[mid].end < off : entries[mid].end <= off) lo = mid + 1; else hi = mid; }
+      return entries[lo];
+    };
+    return {
+      text: parts.join(''), entries,
+      range(start, end) {
+        const r = document.createRange();
+        const a = locate(start, false), b = locate(end, true);
+        if (!a || !b) return null;
+        r.setStart(a.node, start - a.start); r.setEnd(b.node, end - b.start);
+        return r;
+      },
+      // String offset of a DOM boundary point. Points outside indexed text snap to the nearest indexed text.
+      offset(node, off, isEnd) {
+        const e = node.nodeType === 3 && byNode.get(node);
+        if (e) return e.start + off;
+        const probe = document.createRange(); probe.setStart(node, off); probe.collapse(true);
+        if (isEnd) { for (let i = entries.length - 1; i >= 0; i--) if (probe.comparePoint(entries[i].node, entries[i].node.length) <= 0) return entries[i].end; return 0; }
+        for (const en of entries) if (probe.comparePoint(en.node, 0) >= 0) return en.start;
+        return this.text.length;
+      },
+    };
+  }
+  const content = $('#content');
+  function scrollRangeIntoView(r) {
+    const rect = r.getBoundingClientRect(), cr = content.getBoundingClientRect();
+    if (rect.top < cr.top + 40 || rect.bottom > cr.bottom - 40) content.scrollBy({ top: rect.top - cr.top - cr.height / 2 });
+  }
+  const highlights = window.CSS?.highlights ? CSS.highlights : null;
+  function setHighlight(name, ranges, priority = 0) {
+    if (!highlights) return;
+    if (!ranges.length) { highlights.delete(name); return; }
+    const h = new Highlight(...ranges); h.priority = priority; highlights.set(name, h);
+  }
+
+  // ---------- Find in page ----------
+  const findEl = $('#find'), findInput = findEl.querySelector('input'), findCount = findEl.querySelector('.count');
+  const find = { hits: [], cur: -1 };
+  const isFinding = () => document.body.classList.contains('finding');
+  function openFind() {
+    document.body.classList.add('finding');
+    const sel = getSelection().toString().trim();
+    if (sel && !sel.includes('\n') && sel.length < 200) findInput.value = sel;
+    findInput.focus(); findInput.select();
+    runFind();
+  }
+  function closeFind() {
+    document.body.classList.remove('finding');
+    find.hits = []; find.cur = -1; findCount.textContent = '';
+    setHighlight('mdv-find', []); setHighlight('mdv-find-current', []);
+    findInput.blur();
+  }
+  // keepCur: the document was re-rendered; stay on the same match number if it still exists.
+  function runFind(keepCur) {
+    const q = findInput.value;
+    find.hits = [];
+    if (!q) { find.cur = -1; findCount.textContent = ''; setHighlight('mdv-find', []); setHighlight('mdv-find-current', []); return; }
+    const idx = buildIndex(out);
+    const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    for (let m; (m = re.exec(idx.text)) && find.hits.length < 5000;) {
+      const r = idx.range(m.index, m.index + m[0].length); if (r) find.hits.push(r);
+    }
+    setHighlight('mdv-find', find.hits, 1);
+    if (!find.hits.length) { find.cur = -1; findCount.textContent = 'No matches'; setHighlight('mdv-find-current', []); return; }
+    if (!(keepCur && find.cur >= 0 && find.cur < find.hits.length)) {
+      // Start from the first match that is at or below the top of the viewport.
+      const top = content.getBoundingClientRect().top;
+      find.cur = Math.max(0, find.hits.findIndex(r => r.getBoundingClientRect().bottom >= top));
+    }
+    showHit();
+  }
+  function showHit() {
+    const r = find.hits[find.cur]; if (!r) return;
+    if (highlights) setHighlight('mdv-find-current', [r], 2);
+    else { const s = getSelection(); s.removeAllRanges(); s.addRange(r); } // no Custom Highlight API: select the match instead
+    scrollRangeIntoView(r);
+    findCount.textContent = `${find.cur + 1} of ${find.hits.length}`;
+  }
+  function findStep(dir) {
+    if (!isFinding()) { openFind(); return; }
+    if (!find.hits.length) { runFind(); if (!find.hits.length) return; }
+    else { find.cur = (find.cur + dir + find.hits.length) % find.hits.length; }
+    showHit();
+  }
+  findInput.addEventListener('input', () => runFind());
+  findInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); findStep(e.shiftKey ? -1 : 1); }
+    else if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
+  });
+  findEl.addEventListener('click', (e) => {
+    const f = e.target.dataset.f; if (!f) return;
+    if (f === 'next') findStep(1); else if (f === 'prev') findStep(-1); else closeFind();
+  });
+  $('#btn-find').addEventListener('click', openFind);
+  addEventListener('keydown', (e) => {
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && !e.altKey && e.key.toLowerCase() === 'f') { e.preventDefault(); openFind(); }
+    else if (mod && !e.altKey && e.key.toLowerCase() === 'g') { e.preventDefault(); findStep(e.shiftKey ? -1 : 1); }
+    else if (e.key === 'Escape' && isFinding() && !lightbox.classList.contains('open')) closeFind();
+  });
+  document.addEventListener('mdv-rendered', () => { if (isFinding() && findInput.value) runFind(true); });
+
   addEventListener('keydown', (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey || e.target.matches('input, textarea')) return;
     if (e.key === 'r') reload(); else if (e.key === 't') $('#btn-toc').click();
     else if (e.key === 'd') $('#btn-theme').click(); else if (e.key === 'p') { e.preventDefault(); print(); }
+    else if (e.key === 'f' || e.key === '/') { e.preventDefault(); openFind(); }
   });
 
   // ---------- Served mode (mdview): in-viewer navigation between .md files ----------
@@ -651,6 +785,7 @@
       const id = e.payload;
       if (id === 'open') pick(); else if (id === 'reload') reload(); else if (id === 'print') print();
       else if (id === 'toc') $('#btn-toc').click(); else if (id === 'theme') $('#btn-theme').click();
+      else if (id === 'find') openFind(); else if (id === 'find-next') findStep(1); else if (id === 'find-prev') findStep(-1);
       else if (id === 'update') checkForUpdates(true);
       else if (id === 'back') goBack(); else if (id === 'forward') goForward();
       else if (id === 'zoom-in') setZoom(zoom + 0.1); else if (id === 'zoom-out') setZoom(zoom - 0.1); else if (id === 'zoom-reset') setZoom(1);
