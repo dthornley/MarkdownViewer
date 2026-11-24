@@ -652,6 +652,15 @@
   }
 
   // ---------- Find in page ----------
+  // Typing a plain hyphen, quote or space should find the typographic variants that documents
+  // (and the typographer) use: dashes and the minus sign, curly quotes, non-breaking spaces.
+  // Every replacement is one character for one, so offsets into the folded text are unchanged.
+  function foldPunctuation(s) {
+    return s.replace(/[\u2010-\u2015\u2043\u2212\u2796\uFE58\uFE63\uFF0D]/g, '-')
+      .replace(/[\u2018\u2019\u201A\u201B\u2032\u2035\u02BC]/g, "'")
+      .replace(/[\u201C\u201D\u201E\u201F\u2033\u2036]/g, '"')
+      .replace(/[\u00A0\u2002-\u200A\u202F\u205F\u3000]/g, ' ');
+  }
   const findEl = $('#find'), findInput = findEl.querySelector('input'), findCount = findEl.querySelector('.count');
   const find = { hits: [], cur: -1 };
   const isFinding = () => document.body.classList.contains('finding');
@@ -674,8 +683,12 @@
     find.hits = [];
     if (!q) { find.cur = -1; findCount.textContent = ''; setHighlight('mdv-find', []); setHighlight('mdv-find-current', []); return; }
     const idx = buildIndex(out);
-    const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-    for (let m; (m = re.exec(idx.text)) && find.hits.length < 5000;) {
+    // "..." and "--" / "---" in the query also match what the typographer turns them into (… – —).
+    const pattern = foldPunctuation(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      .replace(/\\\.\\\.\\\./g, '(?:\\.\\.\\.|…)').replace(/-{2,3}/g, '-{1,3}');
+    const re = new RegExp(pattern, 'gi');
+    const hay = foldPunctuation(idx.text); // same length as idx.text, so match offsets map straight back
+    for (let m; (m = re.exec(hay)) && find.hits.length < 5000;) {
       const r = idx.range(m.index, m.index + m[0].length); if (r) find.hits.push(r);
     }
     setHighlight('mdv-find', find.hits, 1);
