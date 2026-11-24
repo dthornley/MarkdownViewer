@@ -1038,7 +1038,11 @@
   // resolution above work unchanged; only opening, watching and link clicks differ.
   const tauri = window.__TAURI__;
   if (tauri) {
-    const { invoke } = tauri.core, { listen } = tauri.event;
+    const { invoke } = tauri.core;
+    // Listen on this window only. A plain tauri.event.listen() hears events sent to *any* window,
+    // so with several windows open each one would act on the others' menu, file and drop events.
+    const thisWindow = tauri.window.getCurrentWindow();
+    const listen = (name, handler) => thisWindow.listen(name, handler);
     const isWin = navigator.platform.startsWith('Win');
     const MDV = isWin ? 'http://mdv.localhost/' : 'mdv://localhost';
     const toUrl = (abs) => MDV + abs.replace(/\\/g, '/').split('/').map(encodeURIComponent).join('/');
