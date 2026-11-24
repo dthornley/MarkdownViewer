@@ -22,7 +22,9 @@ REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
 
 if [[ -n "${1:-}" ]]; then
   npm version "$1" --no-git-tag-version >/dev/null
-  sed -i '' -E "0,/^version = \".*\"/s//version = \"$1\"/" src-tauri/Cargo.toml
+  # Only the [package] table's version line (BSD sed has no GNU-style "0,/re/" address).
+  sed -i '' -E "/^\[package\]/,/^\[/ s/^version = \".*\"/version = \"$1\"/" src-tauri/Cargo.toml
+  grep -q "^version = \"$1\"" src-tauri/Cargo.toml || { echo "could not set the version in src-tauri/Cargo.toml" >&2; exit 1; }
   (cd src-tauri && cargo update -q -p markdown-viewer)   # keep Cargo.lock in step
 fi
 VERSION=$(node -p "require('./package.json').version")
