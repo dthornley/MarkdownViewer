@@ -645,10 +645,18 @@
     if (rect.top < cr.top + 40 || rect.bottom > cr.bottom - 40) content.scrollBy({ top: rect.top - cr.top - cr.height / 2 });
   }
   const highlights = window.CSS?.highlights ? CSS.highlights : null;
+  const highlightObjs = new Map();
+  // One long-lived Highlight per name, emptied and refilled in place. Replacing the registry entry
+  // with a new Highlight leaves the old ranges painted in WebKit (only the new ranges are
+  // invalidated), so a match that stopped matching kept its colour until something else repainted it.
   function setHighlight(name, ranges, priority = 0) {
     if (!highlights) return;
-    if (!ranges.length) { highlights.delete(name); return; }
-    const h = new Highlight(...ranges); h.priority = priority; highlights.set(name, h);
+    let h = highlightObjs.get(name);
+    if (!h) { h = new Highlight(); highlightObjs.set(name, h); }
+    h.clear();
+    for (const r of ranges) h.add(r);
+    h.priority = priority;
+    if (!ranges.length) highlights.delete(name); else if (!highlights.has(name)) highlights.set(name, h);
   }
 
   // ---------- Find in page ----------
