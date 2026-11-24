@@ -13,11 +13,13 @@
     --bg: #ffffff; --fg: #1f2328; --muted: #656d76; --border: #d0d7de;
     --code-bg: #f6f8fa; --link: #0969da; --accent: #0969da; --quote: #57606a;
     --toolbar-bg: #f6f8fa; --sidebar-w: 260px; --mark: #fff8c5;
+    --rv: rgba(255, 196, 0, .32); --rv-active: rgba(255, 140, 0, .6); --rv-w: 320px;
   }
   [data-theme="dark"] {
     --bg: #0d1117; --fg: #e6edf3; --muted: #8d96a0; --border: #30363d;
     --code-bg: #161b22; --link: #4493f8; --accent: #4493f8; --quote: #8d96a0;
     --toolbar-bg: #161b22; --mark: #5a4a00;
+    --rv: rgba(255, 196, 0, .22); --rv-active: rgba(255, 140, 0, .5);
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
@@ -140,9 +142,45 @@
   #find button { padding: 3px 8px; }
   ::highlight(mdv-find) { background: var(--mark); color: inherit; }
   ::highlight(mdv-find-current) { background: #ff9632; color: #000; }
+  /* Review mode: comments anchored to the text, listed in a sidebar */
+  ::highlight(mdv-comment) { background: var(--rv); }
+  ::highlight(mdv-comment-active) { background: var(--rv-active); }
+  #btn-review.on { border-color: var(--accent); color: var(--accent); }
+  #comment-btn { position: fixed; z-index: 15; display: none; font-size: 12px; padding: 3px 10px; background: var(--toolbar-bg); box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+  #review {
+    width: var(--rv-w); flex: none; border-left: 1px solid var(--border); overflow: auto; font-size: 13px;
+    position: sticky; top: 49px; height: calc(100vh - 49px); display: none; flex-direction: column;
+  }
+  body.reviewing #review { display: flex; }
+  #review header { position: sticky; top: 0; z-index: 1; background: var(--bg); border-bottom: 1px solid var(--border); padding: 8px 12px; }
+  #review header .row { display: flex; align-items: center; gap: 6px; }
+  #review header .row + .row { margin-top: 6px; }
+  #review header strong { flex: 1; }
+  #review header .count { flex: 1; color: var(--muted); font-size: 12px; }
+  #review header button { font-size: 12px; padding: 2px 8px; }
+  #review header button:disabled { opacity: .4; cursor: default; }
+  #review .list { padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; }
+  #review .empty { color: var(--muted); padding: 24px 12px; text-align: center; line-height: 1.5; }
+  .rv-error { color: #cf222e; }
+  .rv-card { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--bg); cursor: pointer; }
+  .rv-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .rv-card.resolved { opacity: .6; }
+  .rv-quote { color: var(--muted); border-left: 3px solid var(--rv-active); padding-left: 8px; margin-bottom: 6px; white-space: pre-wrap; font-style: italic; overflow-wrap: anywhere; }
+  .rv-card.orphan .rv-quote { border-color: var(--border); text-decoration: line-through; }
+  .rv-general, .rv-orphan { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+  .rv-orphan { color: #9a6700; }
+  .rv-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .rv-sugg { margin-top: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background: var(--code-bg); padding: 6px 8px; border-radius: 6px; white-space: pre-wrap; border-left: 3px solid #1a7f37; overflow-wrap: anywhere; }
+  .rv-sugg::before { content: "Suggested: "; color: #1a7f37; font-family: inherit; font-weight: 600; }
+  .rv-meta { display: flex; gap: 6px; align-items: center; margin-top: 8px; color: var(--muted); font-size: 11px; }
+  .rv-meta span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rv-meta button { font-size: 11px; padding: 1px 7px; }
+  .rv-card textarea { width: 100%; font: inherit; font-size: 13px; resize: vertical; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); padding: 6px 8px; margin: 4px 0; display: block; }
+  .rv-card textarea:focus { outline: none; border-color: var(--accent); }
+  .rv-card textarea.sugg { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
   @media (max-width: 800px) { #toc { display: none; } article { padding: 20px; } }
   @media print {
-    #toolbar, #toc, #find { display: none !important; }
+    #toolbar, #toc, #find, #review, #comment-btn { display: none !important; }
     #content { overflow: visible; } article { max-width: none; padding: 0; }
     .md pre { white-space: pre-wrap; }
   }
@@ -157,11 +195,13 @@
   <button id="btn-reload" title="Re-read the file (R)">Reload</button>
   <button id="btn-find" title="Find in page (⌘F)">Find</button>
   <button id="btn-toc" title="Toggle table of contents (T)">TOC</button>
+  <button id="btn-review" title="Review mode: comment on the document (C)">Review</button>
   <button id="btn-theme" title="Toggle dark mode (D)">Dark</button>
   <button id="btn-print" title="Print / Save as PDF (P)">Print</button>
   <span id="zoom" title="Reset zoom (⌘0)"></span>
 </div>
 <div id="find" role="search"><input type="search" placeholder="Find in document" aria-label="Find in document" autocomplete="off" spellcheck="false"><span class="count"></span><button data-f="prev" title="Previous match (⇧↩)">‹</button><button data-f="next" title="Next match (↩)">›</button><button data-f="close" title="Close (Esc)">Close</button></div>
+<button id="comment-btn" title="Comment on the selected text">Comment</button>
 <div id="lightbox"><div class="bar"><span></span><button data-z="out" title="Zoom out">−</button><button data-z="in" title="Zoom in">+</button><button data-z="fit" title="Fit to window">Fit</button><button data-z="close" title="Close (Esc)">Close</button></div><div class="stage"></div></div>
 <div id="main">
   <nav id="toc" class="hidden"></nav>
@@ -178,6 +218,13 @@
       <div id="out" class="md"></div>
     </article>
   </div>
+  <aside id="review" aria-label="Review comments">
+    <header>
+      <div class="row"><strong>Review</strong><button data-r="close" title="Leave review mode (C)">Close</button></div>
+      <div class="row"><span class="count"></span><button data-r="note" title="Comment on the whole document">+ Note</button><button data-r="resolved">Show resolved</button><button data-r="copy" title="Copy every comment as Markdown">Copy</button></div>
+    </header>
+    <div class="list"></div>
+  </aside>
 </div>
 
 <script src="vendor/markdown-it.min.js"></script>
@@ -194,7 +241,8 @@
   const $ = (s) => document.querySelector(s);
   const out = $('#out'), toc = $('#toc'), drop = $('#drop'), titleEl = $('#title'), errEl = $('#error');
   // fileParam: path (relative to the mdview server root) of the file currently shown in served mode, or null.
-  const state = { fileName: null, handle: null, baseUrl: null, source: '', fileParam: null };
+  // docKey: identifies the document for its review comments (its URL, or the file name when opened without one).
+  const state = { fileName: null, handle: null, baseUrl: null, source: '', fileParam: null, docKey: null };
   let mermaidGen = 0;
 
   // ---------- Theme ----------
@@ -269,6 +317,12 @@
     });
   });
 
+  // Source line of every block, so a review comment can remember roughly where it was made.
+  let lineOffset = 0; // front matter lines stripped before rendering
+  md.core.ruler.push('source_lines', (st) => {
+    for (const t of st.tokens) if (t.block && t.map && t.nesting >= 0) t.attrSet('data-mdv-line', String(t.map[0] + lineOffset + 1));
+  });
+
   // GitHub-style alerts: > [!NOTE]
   md.core.ruler.push('gh_alerts', (st) => {
     const t = st.tokens;
@@ -332,6 +386,7 @@
     let fm = null;
     const fmMatch = /^---\s*\n([\s\S]*?)\n---\s*\n/.exec(src);
     if (fmMatch) { fm = fmMatch[1]; src = src.slice(fmMatch[0].length); }
+    lineOffset = fmMatch ? fmMatch[0].split('\n').length - 1 : 0;
 
     let html;
     try { html = md.render(src); } catch (e) { showError('Render error: ' + e.message); return; }
@@ -423,7 +478,7 @@
     window.__TAURI__?.window.getCurrentWindow().setTitle(name || 'Markdown Viewer');
   }
   async function loadFile(file, handle, keep) {
-    state.handle = handle || null; state.baseUrl = null;
+    state.handle = handle || null; state.baseUrl = null; state.docKey = 'file:' + file.name;
     setTitle(file.name);
     render(await file.text(), keep);
   }
@@ -431,7 +486,7 @@
     try {
       const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-      state.baseUrl = new URL(url, location.href).href;
+      state.baseUrl = new URL(url, location.href).href; state.docKey = state.baseUrl;
       setTitle(decodeURIComponent(url.split('/').pop().split('?')[0]));
       render(await res.text(), keep);
     } catch (e) { showError(`Could not load ${url}: ${e.message}`); }
@@ -465,7 +520,7 @@
   // Paste raw markdown
   addEventListener('paste', (e) => {
     const text = e.clipboardData.getData('text/plain');
-    if (text && !e.target.closest('input, textarea')) { state.handle = null; state.baseUrl = null; setTitle('Pasted Markdown'); render(text); }
+    if (text && !e.target.closest('input, textarea')) { state.handle = null; state.baseUrl = null; state.docKey = null; setTitle('Pasted Markdown'); render(text); }
   });
 
   // Toolbar
@@ -668,7 +723,268 @@
     if (e.key === 'r') reload(); else if (e.key === 't') $('#btn-toc').click();
     else if (e.key === 'd') $('#btn-theme').click(); else if (e.key === 'p') { e.preventDefault(); print(); }
     else if (e.key === 'f' || e.key === '/') { e.preventDefault(); openFind(); }
+    else if (e.key === 'c') setReviewing(!isReviewing());
   });
+
+  // ---------- Review mode ----------
+  // Comments on the text, listed in a sidebar. They are kept beside the document (<file>.review.json
+  // in the app and with the mdview server, localStorage when the page opened the file itself) and
+  // anchored by the quoted text, a little context on each side and the source line of the block,
+  // so they find their place again after the file changes. Nothing here edits the document.
+  const reviewEl = $('#review'), rvList = reviewEl.querySelector('.list'), rvCount = reviewEl.querySelector('.count');
+  const commentBtn = $('#comment-btn'), btnReview = $('#btn-review');
+  const review = { items: [], index: null, active: null, showResolved: false, key: undefined, loading: 0, error: null };
+  const isReviewing = () => document.body.classList.contains('reviewing');
+  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Set by the desktop shell below: the document's path when it is shown through mdv://, and invoke.
+  let tauriDocPath = () => null, tauriInvoke = null;
+
+  const reviewStore = {
+    url: () => `/__review?file=${encodeURIComponent(state.fileParam)}`,
+    async load() {
+      if (!state.docKey) return null;
+      const abs = tauriDocPath();
+      if (abs) return JSON.parse(await tauriInvoke('load_review', { path: abs }) || 'null');
+      if (state.fileParam) {
+        const r = await fetch(this.url(), { cache: 'no-store' });
+        if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+        return r.status === 204 ? null : r.json();
+      }
+      try { return JSON.parse(localStorage.getItem('mdv-review:' + state.docKey) || 'null'); } catch { return null; }
+    },
+    async save(doc) { // null removes the review file
+      if (!state.docKey) return;
+      const json = doc ? JSON.stringify(doc, null, 2) + '\n' : null;
+      const abs = tauriDocPath();
+      if (abs) return tauriInvoke('save_review', { path: abs, json });
+      if (state.fileParam) {
+        const r = await fetch(this.url(), json ? { method: 'PUT', body: json, headers: { 'Content-Type': 'application/json' } } : { method: 'DELETE' });
+        if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+        return;
+      }
+      if (json) localStorage.setItem('mdv-review:' + state.docKey, json); else localStorage.removeItem('mdv-review:' + state.docKey);
+    },
+  };
+
+  // Source line of the block containing `node`, or of the nearest block before it.
+  function lineOf(node) {
+    const el = node.nodeType === 3 ? node.parentElement : node;
+    const own = el?.closest('[data-mdv-line]');
+    if (own) return +own.dataset.mdvLine;
+    let last = null;
+    for (const b of out.querySelectorAll('[data-mdv-line]')) { if (b.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) last = b; else break; }
+    return last ? +last.dataset.mdvLine : null;
+  }
+  // Find each comment's quote in the rendered text (whitespace-insensitively). When it occurs more
+  // than once, the surrounding context and the remembered line decide. Unfound quotes stay listed as orphans.
+  function anchorAll() {
+    const idx = review.index = buildIndex(out), text = idx.text;
+    for (const c of review.items) {
+      c.range = null; c.pos = Infinity;
+      if (!c.quote) { c.pos = -1; continue; }
+      const words = c.quote.trim().split(/\s+/).filter(Boolean);
+      if (!words.length) continue;
+      const re = new RegExp(words.map(escapeRe).join('\\s+'), 'g');
+      let best = null, bestPos = 0, bestScore = -Infinity;
+      for (let m, n = 0; (m = re.exec(text)) && n < 500; n++) {
+        const end = m.index + m[0].length;
+        let score = 0;
+        if (c.prefix && text.slice(Math.max(0, m.index - c.prefix.length), m.index) === c.prefix) score += 2;
+        if (c.suffix && text.startsWith(c.suffix, end)) score += 2;
+        const r = idx.range(m.index, end);
+        if (!r) continue;
+        if (c.line != null) { const l = lineOf(r.startContainer); if (l != null) score -= Math.min(1.5, Math.abs(l - c.line) / 50); }
+        if (score > bestScore) { bestScore = score; best = r; bestPos = m.index; }
+      }
+      if (best) { c.range = best; c.pos = bestPos; }
+    }
+    review.items.sort((a, b) => a.pos - b.pos || (a.created || 0) - (b.created || 0));
+    applyCommentHighlights();
+  }
+  const visibleComments = () => review.items.filter(c => c.range && (review.showResolved || !c.resolved));
+  function applyCommentHighlights() {
+    const vis = isReviewing() ? visibleComments() : [];
+    setHighlight('mdv-comment', vis.map(c => c.range));
+    const a = vis.find(c => c.id === review.active);
+    setHighlight('mdv-comment-active', a ? [a.range] : [], 1);
+  }
+  async function reviewOnRendered() {
+    if (review.key !== state.docKey) {
+      review.key = state.docKey; review.items = []; review.active = null; review.error = null;
+      renderReview();
+      const token = ++review.loading;
+      let doc = null;
+      try { doc = await reviewStore.load(); } catch (e) { review.error = `Could not read the review file: ${e.message || e}`; }
+      if (token !== review.loading || review.key !== state.docKey) return;
+      review.items = Array.isArray(doc?.comments) ? doc.comments.filter(c => c && typeof c === 'object').map(c => ({ ...c, id: String(c.id || uid()) })) : [];
+    }
+    anchorAll(); renderReview();
+  }
+  document.addEventListener('mdv-rendered', reviewOnRendered);
+
+  async function persist() {
+    const comments = review.items.filter(c => !c.draft).map(({ id, quote, prefix, suffix, line, text, suggestion, resolved, created, updated }) =>
+      ({ id, quote, prefix, suffix, line, text, suggestion: suggestion || undefined, resolved, created, updated }));
+    const doc = comments.length ? { version: 1, file: state.fileName, comments } : null;
+    try { await reviewStore.save(doc); review.error = null; }
+    catch (e) { review.error = `Could not save the review: ${e.message || e}`; renderReview(); }
+  }
+
+  function setReviewing(on) {
+    document.body.classList.toggle('reviewing', on);
+    localStorage.setItem('mdv-review', on ? 'on' : 'off');
+    btnReview.classList.toggle('on', on);
+    applyCommentHighlights(); positionCommentBtn();
+  }
+  function setActive(id, fromCard) {
+    review.active = id; applyCommentHighlights();
+    rvList.querySelectorAll('.rv-card').forEach(k => k.classList.toggle('active', k.dataset.id === id));
+    const c = review.items.find(x => x.id === id);
+    if (fromCard) { if (c?.range) scrollRangeIntoView(c.range); }
+    else rvList.querySelector(`.rv-card[data-id="${id}"]`)?.scrollIntoView({ block: 'nearest' });
+  }
+
+  // The selection, when it lies inside the document.
+  function selectionInDoc() {
+    const sel = getSelection();
+    if (!sel.rangeCount || sel.isCollapsed) return null;
+    const r = sel.getRangeAt(0);
+    return out.contains(r.commonAncestorContainer) ? r : null;
+  }
+  // A "Comment" button floats above the selection while in review mode.
+  function positionCommentBtn() {
+    const r = isReviewing() && selectionInDoc();
+    if (!r) { commentBtn.style.display = 'none'; return; }
+    const rect = r.getBoundingClientRect(), cr = content.getBoundingClientRect();
+    if (!rect.width && !rect.height || rect.bottom < cr.top || rect.top > cr.bottom) { commentBtn.style.display = 'none'; return; }
+    commentBtn.style.display = 'block';
+    commentBtn.style.left = `${Math.min(cr.right - 96, Math.max(cr.left + 8, rect.right - 86))}px`;
+    commentBtn.style.top = `${Math.max(cr.top + 4, rect.top - 34)}px`;
+  }
+  document.addEventListener('selectionchange', positionCommentBtn);
+  content.addEventListener('scroll', positionCommentBtn, { passive: true });
+  commentBtn.addEventListener('mousedown', (e) => e.preventDefault()); // keep the selection
+  commentBtn.addEventListener('click', commentOnSelection);
+  function commentOnSelection() {
+    const r = selectionInDoc(); if (!r) return;
+    const idx = review.index = buildIndex(out);
+    let s = idx.offset(r.startContainer, r.startOffset, false), e = idx.offset(r.endContainer, r.endOffset, true);
+    const raw = idx.text.slice(s, e);
+    s += raw.length - raw.trimStart().length; e -= raw.length - raw.trimEnd().length;
+    if (e <= s) return;
+    if (!isReviewing()) setReviewing(true);
+    newComment({ quote: idx.text.slice(s, e), prefix: idx.text.slice(Math.max(0, s - 32), s), suffix: idx.text.slice(e, e + 32), line: lineOf(r.startContainer) });
+    getSelection().removeAllRanges();
+  }
+  function newComment(anchor) {
+    review.items = review.items.filter(c => !c.draft); // one draft at a time
+    const c = { id: uid(), ...anchor, text: '', suggestion: anchor.quote && anchor.quote.length < 300 ? anchor.quote : '', resolved: false, draft: true };
+    review.items.push(c);
+    anchorAll(); review.active = c.id; applyCommentHighlights(); renderReview();
+    rvList.querySelector(`.rv-card[data-id="${c.id}"]`)?.scrollIntoView({ block: 'nearest' });
+  }
+  // Clicking a highlighted passage selects its comment in the sidebar.
+  function caretAt(x, y) {
+    if (document.caretPositionFromPoint) { const p = document.caretPositionFromPoint(x, y); return p && { node: p.offsetNode, offset: p.offset }; }
+    const r = document.caretRangeFromPoint?.(x, y); return r && { node: r.startContainer, offset: r.startOffset };
+  }
+  out.addEventListener('click', (e) => {
+    if (!isReviewing() || !getSelection().isCollapsed || e.target.closest('a, button, input, summary')) return;
+    const p = caretAt(e.clientX, e.clientY); if (!p) return;
+    const hit = visibleComments().find(c => { try { return c.range.comparePoint(p.node, p.offset) === 0; } catch { return false; } });
+    if (hit) setActive(hit.id, false);
+  });
+
+  function reviewMarkdown() {
+    const items = review.items.filter(c => !c.draft);
+    const lines = [`# Review of ${state.fileName || 'document'}`, ''];
+    items.forEach((c, i) => {
+      const where = c.quote ? (c.line != null ? `Line ${c.line}` : 'Text') : 'Whole document';
+      lines.push(`## ${i + 1}. ${where}${c.resolved ? ' (resolved)' : ''}`, '');
+      if (c.quote) lines.push(...c.quote.split('\n').map(l => `> ${l}`), '');
+      if (c.text) lines.push(c.text, '');
+      if (c.suggestion) lines.push('Suggested replacement:', '', '~~~', c.suggestion, '~~~', '');
+    });
+    return lines.join('\n');
+  }
+
+  function el(tag, attrs = {}, ...kids) {
+    const n = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === 'class') n.className = v; else if (k.startsWith('on')) n.addEventListener(k.slice(2), v); else if (v != null) n.setAttribute(k, v);
+    }
+    n.append(...kids.filter(k => k != null)); return n;
+  }
+  const fmtDate = (t) => t ? new Date(t).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '';
+  function renderReview() {
+    const open = review.items.filter(c => !c.resolved && !c.draft).length, resolved = review.items.filter(c => c.resolved).length;
+    btnReview.textContent = open ? `Review (${open})` : 'Review';
+    rvCount.textContent = [open && `${open} open`, resolved && `${resolved} resolved`].filter(Boolean).join(', ');
+    const resolvedBtn = reviewEl.querySelector('[data-r="resolved"]');
+    resolvedBtn.textContent = review.showResolved ? 'Hide resolved' : 'Show resolved'; resolvedBtn.style.display = resolved ? '' : 'none';
+    reviewEl.querySelector('[data-r="copy"]').disabled = !(open || resolved);
+    rvList.replaceChildren();
+    if (review.error) rvList.append(el('div', { class: 'rv-error' }, review.error));
+    const shown = review.items.filter(c => review.showResolved || !c.resolved || c.draft);
+    if (!shown.length) {
+      rvList.append(el('div', { class: 'empty' }, review.items.length ? 'All comments are resolved.'
+        : state.docKey ? 'Select some text and click Comment, or add a note about the whole document.'
+        : 'Comments on pasted text last until this window closes.'));
+      return;
+    }
+    for (const c of shown) rvList.append(renderCard(c));
+  }
+  function renderCard(c) {
+    const orphan = c.quote && !c.range;
+    const card = el('div', { class: 'rv-card' + (c.id === review.active ? ' active' : '') + (c.resolved ? ' resolved' : '') + (orphan ? ' orphan' : ''), 'data-id': c.id });
+    if (c.quote) card.append(el('div', { class: 'rv-quote', title: c.quote }, c.quote.length > 180 ? c.quote.slice(0, 180) + '…' : c.quote));
+    else card.append(el('div', { class: 'rv-general' }, 'Whole document'));
+    if (orphan) card.append(el('div', { class: 'rv-orphan' }, 'This text is no longer in the document.'));
+    const rerender = () => { applyCommentHighlights(); renderReview(); };
+    if (c.editing || c.draft) {
+      const text = el('textarea', { placeholder: 'Comment', rows: 3 }); text.value = c.text || '';
+      const sugg = el('textarea', { class: 'sugg', placeholder: 'Suggested replacement (optional)', rows: 2 }); sugg.value = c.suggestion || '';
+      const cancel = () => { if (c.draft) review.items = review.items.filter(x => x !== c); else delete c.editing; rerender(); };
+      const save = () => {
+        c.text = text.value.trim(); c.suggestion = c.quote ? sugg.value.trim() : '';
+        if (c.quote && c.suggestion === c.quote.trim()) c.suggestion = ''; // unchanged prefill is not a suggestion
+        if (!c.text && !c.suggestion) return cancel();
+        delete c.draft; delete c.editing; c.updated = Date.now(); c.created ||= c.updated;
+        persist(); rerender();
+      };
+      const keys = (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); save(); } else if (e.key === 'Escape') { e.preventDefault(); cancel(); } };
+      text.addEventListener('keydown', keys); sugg.addEventListener('keydown', keys);
+      card.append(text, c.quote ? sugg : null, el('div', { class: 'rv-meta' }, el('span', {}, '⌘↩ saves, Esc cancels'), el('button', { onclick: save }, 'Save'), el('button', { onclick: cancel }, 'Cancel')));
+      setTimeout(() => text.focus(), 0);
+      return card;
+    }
+    if (c.text) card.append(el('div', { class: 'rv-text' }, c.text));
+    if (c.suggestion) card.append(el('div', { class: 'rv-sugg' }, c.suggestion));
+    const del = el('button', { title: 'Delete this comment' }, 'Delete');
+    del.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!del.dataset.armed) { del.dataset.armed = '1'; del.textContent = 'Delete?'; setTimeout(() => { delete del.dataset.armed; del.textContent = 'Delete'; }, 3000); return; }
+      review.items = review.items.filter(x => x !== c); persist(); rerender();
+    });
+    const edited = c.updated && c.updated !== c.created ? `Edited ${fmtDate(c.updated)}` : '';
+    card.append(el('div', { class: 'rv-meta' },
+      el('span', { title: edited }, fmtDate(c.created) + (c.quote && c.line != null ? ` · line ${c.line}` : '')),
+      el('button', { onclick: (e) => { e.stopPropagation(); c.resolved = !c.resolved; c.updated = Date.now(); persist(); rerender(); } }, c.resolved ? 'Reopen' : 'Resolve'),
+      el('button', { onclick: (e) => { e.stopPropagation(); c.editing = true; renderReview(); } }, 'Edit'),
+      del));
+    card.addEventListener('click', () => setActive(c.id, true));
+    return card;
+  }
+  reviewEl.querySelector('header').addEventListener('click', (e) => {
+    const r = e.target.dataset.r; if (!r) return;
+    if (r === 'close') setReviewing(false);
+    else if (r === 'note') newComment({});
+    else if (r === 'resolved') { review.showResolved = !review.showResolved; applyCommentHighlights(); renderReview(); }
+    else if (r === 'copy') navigator.clipboard.writeText(reviewMarkdown()).then(() => { e.target.textContent = 'Copied'; setTimeout(() => e.target.textContent = 'Copy', 1200); });
+  });
+  btnReview.addEventListener('click', () => setReviewing(!isReviewing()));
+  if (localStorage.getItem('mdv-review') === 'on') setReviewing(true);
 
   // ---------- Served mode (mdview): in-viewer navigation between .md files ----------
   const MD_EXT = /\.(md|markdown|mdown|mkd)$/i;
@@ -727,6 +1043,7 @@
     const MDV = isWin ? 'http://mdv.localhost/' : 'mdv://localhost';
     const toUrl = (abs) => MDV + abs.replace(/\\/g, '/').split('/').map(encodeURIComponent).join('/');
     const fromUrl = (u) => { const p = decodeURIComponent(new URL(u).pathname); return isWin ? p.replace(/^\//, '') : p; };
+    tauriDocPath = () => state.baseUrl?.startsWith(MDV) ? fromUrl(state.baseUrl) : null; tauriInvoke = invoke;
     let lastOpen = { path: null, at: 0 }, changeTimer = null;
     // Back/forward history for this window: every document shown here, with where it was scrolled to.
     const nav = { back: [], fwd: [] };
@@ -741,8 +1058,9 @@
       updateNav();
       state.handle = null;
       if (entry) document.addEventListener('mdv-rendered', () => { $('#content').scrollTop = entry.scroll; }, { once: true });
+      // Register the document first: the review commands only serve the document this window shows.
+      await invoke('watch_file', { path: abs }).catch(e => showError(String(e)));
       await loadUrl(toUrl(abs));
-      invoke('watch_file', { path: abs }).catch(e => showError(String(e)));
     }
     function goBack() { const e = nav.back.pop(); if (!e) return; const here = navHere(); if (here) nav.fwd.push(here); location.hash = e.hash; openPath(e.path, e); }
     function goForward() { const e = nav.fwd.pop(); if (!e) return; const here = navHere(); if (here) nav.back.push(here); location.hash = e.hash; openPath(e.path, e); }
@@ -786,6 +1104,7 @@
       if (id === 'open') pick(); else if (id === 'reload') reload(); else if (id === 'print') print();
       else if (id === 'toc') $('#btn-toc').click(); else if (id === 'theme') $('#btn-theme').click();
       else if (id === 'find') openFind(); else if (id === 'find-next') findStep(1); else if (id === 'find-prev') findStep(-1);
+      else if (id === 'review') setReviewing(!isReviewing()); else if (id === 'comment') commentOnSelection();
       else if (id === 'update') checkForUpdates(true);
       else if (id === 'back') goBack(); else if (id === 'forward') goForward();
       else if (id === 'zoom-in') setZoom(zoom + 0.1); else if (id === 'zoom-out') setZoom(zoom - 0.1); else if (id === 'zoom-reset') setZoom(1);
