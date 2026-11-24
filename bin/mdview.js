@@ -70,6 +70,30 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     return res.end(JSON.stringify({ mtime: fs.statSync(p).mtimeMs }));
   }
+  // Review comments for a served document live beside it in <file>.review.json.
+  if (pathname === '/__review') {
+    const p = safeJoin(root, url.searchParams.get('file') || '');
+    if (!p || !fs.existsSync(p) || fs.statSync(p).isDirectory()) { res.writeHead(404); return res.end(); }
+    const sidecar = p + '.review.json';
+    if (req.method === 'GET') {
+      if (!fs.existsSync(sidecar)) { res.writeHead(204); return res.end(); }
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      return fs.createReadStream(sidecar).pipe(res);
+    }
+    if (req.method === 'DELETE') { fs.rmSync(sidecar, { force: true }); res.writeHead(204); return res.end(); }
+    if (req.method === 'PUT') {
+      const chunks = []; let size = 0;
+      req.on('data', (c) => { size += c.length; if (size > 4e6) { res.writeHead(413); res.end(); req.destroy(); } else chunks.push(c); });
+      req.on('end', () => {
+        if (res.writableEnded) return;
+        const body = Buffer.concat(chunks);
+        try { JSON.parse(body.toString('utf8')); fs.writeFileSync(sidecar + '.tmp', body); fs.renameSync(sidecar + '.tmp', sidecar); res.writeHead(204); res.end(); }
+        catch (e) { res.writeHead(400); res.end(String(e.message)); }
+      });
+      return;
+    }
+    res.writeHead(405); return res.end();
+  }
   if (pathname === '/__events') {
     const file = url.searchParams.get('file') || '';
     const p = safeJoin(root, file);

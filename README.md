@@ -11,6 +11,8 @@ A simple, friendly viewer for Markdown files. One HTML file, no build step. Inst
 - LaTeX math via KaTeX (`$...$` and `$$...$$`)
 - YAML front matter shown in a collapsible block
 - Table of contents sidebar with scroll tracking, heading anchors
+- Find in page (⌘F) with every match highlighted, including matches that span formatting
+- Review mode: select text and leave comments, with optional suggested replacements, in a sidebar; comments are saved next to the file and can be copied out as Markdown
 - Light and dark themes, print / save as PDF
 - Works fully offline: all rendering libraries are bundled
 - macOS app (Tauri): opens `.md` files from Finder, drag and drop onto the window, live reload, one window per document (or tabs), Open Recent, and the open documents come back on relaunch
@@ -114,12 +116,20 @@ To set up a new Mac, copy that file over, or generate a fresh pair and commit th
 npx tauri signer generate -w ~/.tauri/markdownviewer.key
 ```
 
+## Review mode
+
+Click **Review** (or press `c`; **View › Review Mode** in the app) to open the review sidebar. Select any text in the document and click the **Comment** button that appears above it to leave a comment. The quoted text is prefilled as a *suggested replacement* that you can edit, or clear if you only want to comment. **+ Note** adds a comment about the whole document. Comments can be edited, resolved and deleted; resolved ones are hidden unless you ask to see them. Clicking a highlighted passage selects its comment, and clicking a comment scrolls to its passage.
+
+Comments are stored beside the document as `<file>.review.json` (in the app and when served with `mdview`; in the browser's local storage when the page opened the file itself). They are anchored by the quoted text with a little surrounding context and the block's source line, so they stay attached while the rest of the file changes; a comment whose text has been removed is kept and marked as such. **Copy** puts the whole review on the clipboard as Markdown, handy for pasting into a pull request or handing to whoever (or whatever) edits the file. Review mode never changes the Markdown file.
+
 ## Keyboard shortcuts
 
 | Key | Action |
 |-----|--------|
 | `r` | Reload file |
 | `t` | Toggle table of contents |
+| `⌘F`, `f` or `/` | Find in page; `↩` / `⇧↩` (or `⌘G` / `⌘⇧G`) step through matches, `Esc` closes |
+| `c` | Toggle review mode (`⌘⇧R` in the app; `⌘⇧M` comments on the selection) |
 | `d` | Toggle dark mode |
 | `p` | Print |
 | `⌘[` / `⌘]` | Back / forward between documents opened by following links (app; the browser's own history does this when served) |

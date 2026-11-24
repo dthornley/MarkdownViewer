@@ -244,6 +244,45 @@ async fn open_dialog(app: AppHandle) {
     }
 }
 
+// ---------- review comments ----------
+// Comments made in review mode live in `<document>.review.json` beside the document. A window may
+// only read and write the file of the document it is showing (recorded by `watch_file`).
+
+fn review_path(window: &Window, state: &AppState, path: &str) -> Result<PathBuf, String> {
+    match state.docs.lock().unwrap().get(window.label()) {
+        Some(doc) if doc == path => Ok(PathBuf::from(format!("{path}.review.json"))),
+        _ => Err("not the document shown in this window".into()),
+    }
+}
+
+#[tauri::command]
+fn load_review(window: Window, state: State<'_, AppState>, path: String) -> Result<Option<String>, String> {
+    let target = review_path(&window, &state, &path)?;
+    match std::fs::read_to_string(&target) {
+        Ok(json) => Ok(Some(json)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("{}: {e}", target.display())),
+    }
+}
+
+/// Writes the review file, or removes it when `json` is `None` (the last comment was deleted).
+#[tauri::command]
+fn save_review(window: Window, state: State<'_, AppState>, path: String, json: Option<String>) -> Result<(), String> {
+    let target = review_path(&window, &state, &path)?;
+    let shown = |e: std::io::Error| format!("{}: {e}", target.display());
+    match json {
+        None => match std::fs::remove_file(&target) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(shown(e)),
+            _ => Ok(()),
+        },
+        Some(json) => {
+            let tmp = target.with_extension("json.tmp");
+            std::fs::write(&tmp, json).map_err(shown)?;
+            std::fs::rename(&tmp, &target).map_err(shown)
+        }
+    }
+}
+
 // ---------- mdv:// protocol ----------
 
 fn mime_for(path: &str) -> &'static str {
@@ -531,6 +570,11 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     let print = MenuItemBuilder::with_id("print", "Print…").accelerator("CmdOrCtrl+P").build(app)?;
     let toc = MenuItemBuilder::with_id("toc", "Toggle Table of Contents").accelerator("CmdOrCtrl+Shift+T").build(app)?;
     let theme = MenuItemBuilder::with_id("theme", "Toggle Dark Mode").accelerator("CmdOrCtrl+Shift+D").build(app)?;
+    let find = MenuItemBuilder::with_id("find", "Find…").accelerator("CmdOrCtrl+F").build(app)?;
+    let find_next = MenuItemBuilder::with_id("find-next", "Find Next").accelerator("CmdOrCtrl+G").build(app)?;
+    let find_prev = MenuItemBuilder::with_id("find-prev", "Find Previous").accelerator("CmdOrCtrl+Shift+G").build(app)?;
+    let review = MenuItemBuilder::with_id("review", "Review Mode").accelerator("CmdOrCtrl+Shift+R").build(app)?;
+    let comment = MenuItemBuilder::with_id("comment", "Comment on Selection").accelerator("CmdOrCtrl+Shift+M").build(app)?;
     let update = MenuItemBuilder::with_id("update", "Check for Updates…").build(app)?;
     #[cfg(target_os = "macos")]
     let default_app = MenuItemBuilder::with_id("default-app", "Make Default Markdown Viewer").build(app)?;
@@ -561,10 +605,10 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
         .item(&new_win).item(&open).item(&recent_menu).item(&reload).separator().item(&print).separator().close_window()
         .build()?;
     let edit = SubmenuBuilder::new(app, "Edit")
-        .undo().redo().separator().cut().copy().paste().select_all()
+        .undo().redo().separator().cut().copy().paste().select_all().separator().item(&find).item(&find_next).item(&find_prev)
         .build()?;
     let view = SubmenuBuilder::new(app, "View")
-        .item(&back).item(&forward).separator().item(&toc).item(&theme).separator().item(&zoom_in).item(&zoom_out).item(&zoom_reset).separator().item(&tabs).separator().fullscreen();
+        .item(&back).item(&forward).separator().item(&toc).item(&theme).separator().item(&review).item(&comment).separator().item(&zoom_in).item(&zoom_out).item(&zoom_reset).separator().item(&tabs).separator().fullscreen();
     #[cfg(not(target_os = "macos"))]
     let view = view.separator().item(&update);
     let view = view.build()?;
@@ -655,7 +699,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(AppState::default())
         .register_uri_scheme_protocol("mdv", |_ctx, request| serve_local_file(request))
-        .invoke_handler(tauri::generate_handler![take_pending_file, watch_file, open_dialog])
+        .invoke_handler(tauri::generate_handler![take_pending_file, watch_file, open_dialog, load_review, save_review])
         .on_window_event(|window, event| {
             let app = window.app_handle();
             let state = app.state::<AppState>();
